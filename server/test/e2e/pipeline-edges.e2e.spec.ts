@@ -8,9 +8,7 @@
  * off by a token limit, four handles transcribed into something Snapchat cannot
  * hold, and one dropped character turning one man into two ledger rows.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { isPlausibleHandle } from '../../src/extraction/normalize';
 import { dropFixtures, makeClient, prisma, TestClient } from '../fixtures';
@@ -22,9 +20,8 @@ import {
   truncatedGolden,
   TRUNCATED_COMPLETE_ENTRIES,
 } from '../recorded';
+import { describeSheet, SHEET } from '../sheet-fixture';
 import { bootHarness, forwardEverything, Harness } from './app';
-
-const SHEET = readFileSync(join(__dirname, '..', '..', '..', 'test', 'main', 'all99_3col.png'));
 
 let h: Harness;
 
@@ -50,7 +47,7 @@ async function clientFor(model: string, accounts = 1): Promise<TestClient> {
   return client;
 }
 
-describe('a templated reply is refused', () => {
+describeSheet('a templated reply is refused', () => {
   /**
    * The failure this guard exists for is not a crash. gpt-4.1-mini returned 99
    * well-formed entries with 99 usable handles and labelled every one of them
@@ -104,7 +101,7 @@ describe('a templated reply is refused', () => {
   });
 });
 
-describe('a truncated reply is salvaged', () => {
+describeSheet('a truncated reply is salvaged', () => {
   it('marks the sheet partial and keeps every complete entry', async () => {
     const client = await clientFor('gemini-3.6-flash');
     const account = client.personality.accounts[0];
@@ -139,7 +136,7 @@ describe('a truncated reply is salvaged', () => {
   });
 });
 
-describe('an implausible handle is skipped, the rest still land', () => {
+describeSheet('an implausible handle is skipped, the rest still land', () => {
   /**
    * An invented handle is far more damaging than a dropped one. It enters the
    * ledger, gets assigned, and an account spends a follow slot on somebody who
@@ -181,7 +178,7 @@ describe('an implausible handle is skipped, the rest still land', () => {
   });
 });
 
-describe('a near duplicate goes to review, not to a second follow', () => {
+describeSheet('a near duplicate goes to review, not to a second follow', () => {
   /**
    * Two independent extractions of ONE image read the same man as
    * `timetogotawatch` and `timetogotowatch`, both under the display name "Matt".
@@ -236,7 +233,7 @@ describe('a near duplicate goes to review, not to a second follow', () => {
   });
 });
 
-describe('re-uploading the same image is free', () => {
+describeSheet('re-uploading the same image is free', () => {
   /**
    * A client whose connection dropped retries. UNIQUE (accountId, sha256) means
    * the retry hands back the original job instead of buying a second vision

@@ -9,16 +9,13 @@
  * silent ones. Nothing throws, no sheet is marked failed, and the ledger fills
  * up correctly; it is the work that goes missing.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { avatarPrompt, sheetPrompt } from '../../src/extraction/sheet-task';
 import { dropFixtures, makeClient, prisma } from '../fixtures';
 import { GOLDEN_99, HAIKU_TWIN } from '../recorded';
+import { describeSheet, SHEET } from '../sheet-fixture';
 import { bootHarness, Harness } from './app';
-
-const SHEET = readFileSync(join(__dirname, '..', '..', '..', 'test', 'main', 'all99_3col.png'));
 
 let h: Harness;
 
@@ -45,7 +42,7 @@ async function rule(clientId: string, presentsAs: string[]): Promise<void> {
   });
 }
 
-describe('a client with no filter rules', () => {
+describeSheet('a client with no filter rules', () => {
   /**
    * Documents current behaviour, and it is worth documenting because it is
    * indistinguishable from a broken pipeline at the only place a client can see:
@@ -84,7 +81,7 @@ describe('a client with no filter rules', () => {
   });
 });
 
-describe('the templated-output guard', () => {
+describeSheet('the templated-output guard', () => {
   /**
    * The guard is real and it works -- see pipeline-edges, where a templated
    * reply is refused. It just cannot be reached by anything the service asks
@@ -126,7 +123,7 @@ describe('the templated-output guard', () => {
   });
 });
 
-describe('a near duplicate under a rule that does not match it', () => {
+describeSheet('a near duplicate under a rule that does not match it', () => {
   /**
    * FAILING, and it is a real bug rather than a strict test.
    *

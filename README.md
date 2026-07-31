@@ -15,7 +15,12 @@ else.
 | `server/` | NestJS 11 + Prisma + Postgres. The API, the pipeline, the queue worker |
 | `web/` | React 19 + Vite operator UI |
 | `vlm_eval/` | the measurement harness behind every model, prompt and cost decision. `ground_truth.json` is the scoring key the server's golden-file test asserts against |
-| `test/`, `pages/` | fixtures: the 99-entry contact sheet and the raw captures it was built from |
+`test/` and `pages/` are **not** in the repository. They held the 99-entry
+contact sheet, the 99 row crops cut from it and the nine raw captures — faces,
+display names and handles of real people, which do not belong in a history that
+outlives any decision to delete them. Supply `test/main/all99_3col.png` yourself
+for full e2e coverage; the sheet-driven specs skip without it and say so. See
+`server/test/sheet-fixture.ts`.
 
 `vlm_eval/` is here rather than with the client because it justifies *this*
 side's choices — which model, which prompt, what it costs, what it gets wrong.
@@ -57,7 +62,9 @@ machine.
 cd server && npx vitest run
 ```
 
-312 across four projects: `unit` (pure functions), `int` (real Postgres —
+312 across four projects — 303 on a fresh clone, since the nine sheet-driven
+e2e tests skip until you supply the fixture above. `unit` (pure functions),
+`int` (real Postgres —
 per-personality scoping and the concurrent metered claim), `http` (auth, tenant
 isolation, validation), `e2e` (real HTTP through the booted app, real pipeline,
 the vision call replayed from recorded output).

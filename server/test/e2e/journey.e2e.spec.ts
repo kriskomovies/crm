@@ -21,16 +21,13 @@
  *      goes red because someone made the unique global, the second personality
  *      would silently stop growing in production and nothing would error.
  */
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, expect, it } from 'vitest';
 
 import { addPersonality, dropFixtures, makeClient, prisma } from '../fixtures';
 import { GOLDEN_99, GOLDEN_99_RERUN, groundTruthHandles, SHEET_SHA256 } from '../recorded';
+/** The real screenshot, all 99 profiles of it. Supplied per machine, not committed. */
+import { describeSheet, SHEET } from '../sheet-fixture';
 import { bootHarness, forwardEverything, Harness } from './app';
-
-/** The real screenshot, all 99 profiles of it. */
-const SHEET = readFileSync(join(__dirname, '..', '..', '..', 'test', 'main', 'all99_3col.png'));
 
 /**
  * The one entry in the golden reply whose avatar and display name disagree:
@@ -55,7 +52,7 @@ afterEach(async () => {
   await dropFixtures();
 });
 
-describe('screenshot to follow targets, over HTTP', () => {
+describeSheet('screenshot to follow targets, over HTTP', () => {
   it('walks the whole journey', async () => {
     const client = await makeClient({ accounts: 2, dailyCap: 10 });
     await forwardEverything(client.id);

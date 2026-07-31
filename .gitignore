@@ -11,6 +11,17 @@ vlm_eval/.apimart_key
 .env.*
 !.env.example
 
+# Screenshots and crops of real people: the nine Quick Add captures, the
+# 99-profile contact sheet and the 99 individual row crops cut from it. These
+# are faces, display names and handles belonging to people who never agreed to
+# be in a git history, and a git history is the one place you cannot delete
+# them from later. Both directories are images only.
+#
+# The e2e suite supplies test/main/all99_3col.png per machine and skips when it
+# is missing -- see server/test/sheet-fixture.ts.
+pages/
+test/
+
 # Local runtime state, never an image or a repo
 server/.storage/
 server/api.log
