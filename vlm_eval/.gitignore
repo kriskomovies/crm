@@ -1,0 +1,5 @@
+# API key for the apimart.ai gateway. Never commit this.
+.apimart_key
+
+crops/
+__pycache__/

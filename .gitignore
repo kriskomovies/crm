@@ -1,0 +1,22 @@
+# Secrets. .env carries the vision-model key, the database password and the
+# operator login -- committing it is the whole compromise in one file.
+.env
+server/.env
+vlm_eval/.apimart_key
+
+node_modules/
+dist/
+build/
+__pycache__/
+*.pyc
+
+# Local runtime state, never an image or a repo
+server/.storage/
+server/api.log
+server/api.err
+vlm_eval/crops/
+vlm_eval/results/
+
+# Caddy's issued certificates
+caddy-data/
+caddy-config/

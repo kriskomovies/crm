@@ -1,0 +1,130 @@
+/**
+ * The route table, written out by hand, and the reason it is written out.
+ *
+ * A guard is invisible in a service test: `personalities.targets(clientId, ...)`
+ * is the test supplying the clientId, so it passes identically whether or not
+ * anything checks who the caller is. The only way a missing @UseGuards shows up
+ * is if something walks the whole HTTP surface and demands 401 from every entry.
+ * "The whole surface" is the part that rots -- a controller added in six months
+ * is exactly the one nobody adds a test for.
+ *
+ * So this list is checked against the routes Express actually serves, and the
+ * auth matrix runs over the list. Adding a route without adding it here fails
+ * the drift test; adding it here without a guard fails the auth matrix. Neither
+ * can be satisfied by remembering to do something.
+ *
+ * KEEP IN SYNC with the controllers. That is the whole contract of this file.
+ *
+ * Path params are placeholder uuids on purpose. The auth matrix must be able to
+ * fire every verb -- including DELETE /api/personalities/:id -- without touching
+ * a real row, and a 404 is a perfectly good "not 401".
+ */
+
+/** Not a real id anywhere, so a request that gets past the guard finds nothing. */
+export const ABSENT = '00000000-0000-4000-8000-0000000000ff';
+
+export interface RouteSpec {
+  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  /** As Express registers it, so the drift test can compare strings. */
+  path: string;
+  /** The same route with the params filled in. */
+  sample: string;
+  /** Sent when the request needs a body to be interesting. Guards run before
+   *  pipes in Nest, so an absent or invalid body still has to 401. */
+  body?: unknown;
+}
+
+export const ROUTES: RouteSpec[] = [
+  // SheetsController
+  {
+    method: 'POST',
+    path: '/v1/accounts/:accountId/sheets',
+    sample: `/v1/accounts/${ABSENT}/sheets`,
+  },
+  {
+    method: 'GET',
+    path: '/v1/accounts/:accountId/sheets/:jobId',
+    sample: `/v1/accounts/${ABSENT}/sheets/${ABSENT}`,
+  },
+
+  // TargetsController -- the metered claim and its callback
+  {
+    method: 'GET',
+    path: '/v1/accounts/:accountId/targets',
+    sample: `/v1/accounts/${ABSENT}/targets`,
+  },
+  {
+    method: 'POST',
+    path: '/v1/accounts/:accountId/targets/:handle/result',
+    sample: `/v1/accounts/${ABSENT}/targets/someone/result`,
+    body: { result: 'followed' },
+  },
+
+  // PersonalityLedgerController
+  {
+    method: 'GET',
+    path: '/v1/personalities/:personalityId/ledger',
+    sample: `/v1/personalities/${ABSENT}/ledger`,
+  },
+
+  // PersonalitiesController
+  { method: 'GET', path: '/api/personalities', sample: '/api/personalities' },
+  {
+    method: 'POST',
+    path: '/api/personalities',
+    sample: '/api/personalities',
+    body: { name: 'auth-matrix' },
+  },
+  {
+    method: 'POST',
+    path: '/api/personalities/:id/accounts',
+    sample: `/api/personalities/${ABSENT}/accounts`,
+    body: { label: 'auth-matrix' },
+  },
+  {
+    method: 'GET',
+    path: '/api/personalities/:id/targets',
+    sample: `/api/personalities/${ABSENT}/targets`,
+  },
+  {
+    method: 'POST',
+    path: '/api/personalities/:id/targets',
+    sample: `/api/personalities/${ABSENT}/targets`,
+    body: { handles: ['auth_matrix'] },
+  },
+  {
+    method: 'GET',
+    path: '/api/personalities/:id/review',
+    sample: `/api/personalities/${ABSENT}/review`,
+  },
+  {
+    method: 'DELETE',
+    path: '/api/personalities/:id',
+    sample: `/api/personalities/${ABSENT}`,
+  },
+
+  // AccountsController
+  {
+    method: 'PATCH',
+    path: '/api/accounts/:id',
+    sample: `/api/accounts/${ABSENT}`,
+    body: { dailyCap: 10 },
+  },
+
+  // StatsController
+  { method: 'GET', path: '/api/stats', sample: '/api/stats' },
+
+  // CrmController
+  { method: 'GET', path: '/api/overview', sample: '/api/overview' },
+  { method: 'GET', path: '/api/sheets', sample: '/api/sheets' },
+  {
+    method: 'GET',
+    path: '/api/sheets/:id/image',
+    sample: `/api/sheets/${ABSENT}/image`,
+  },
+];
+
+/** "METHOD /path" for every declared route, in the shape Harness.routes() returns. */
+export function declaredRoutes(): string[] {
+  return ROUTES.map((r) => `${r.method} ${r.path}`).sort();
+}

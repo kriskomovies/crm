@@ -1,0 +1,388 @@
+/* Mobile first. The only breakpoint that matters is 720px: below it the tables
+   restack as label/value cards, above it they are tables. Wide content always
+   scrolls inside .scroll-x so the page body never scrolls sideways. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --inset: #1b1f28;
+  --line: #262b36;
+  --text: #e6e9ef;
+  --muted: #8b94a7;
+  --accent: #5b9cff;
+  --green: #3fb950;
+  --amber: #d29922;
+  --red: #f2555a;
+  --violet: #a371f7;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  -webkit-text-size-adjust: 100%;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12.5px;
+  color: #b9c4d8;
+  overflow-wrap: anywhere;
+}
+
+.app { max-width: 1280px; margin: 0 auto; padding: 16px 14px 72px; }
+@media (min-width: 720px) { .app { padding: 24px 20px 72px; } }
+
+/* ---------------------------------------------------------------- topbar */
+
+.topbar {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 14px;
+  margin-bottom: 20px;
+}
+@media (min-width: 560px) {
+  .topbar { flex-direction: row; align-items: center; gap: 24px; }
+}
+h1 { font-size: 17px; margin: 0; letter-spacing: -0.01em; white-space: nowrap; }
+h2 { font-size: 15.5px; margin: 0; letter-spacing: -0.01em; }
+h3 { font-size: 14px; margin: 0; }
+
+.dot {
+  display: inline-block;
+  width: 7px; height: 7px;
+  margin-left: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  vertical-align: middle;
+}
+.dot-bad { background: var(--red); }
+
+nav { display: flex; gap: 4px; flex-wrap: wrap; }
+nav button {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--muted);
+  padding: 7px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+}
+nav button:hover { color: var(--text); background: var(--panel); }
+nav button.on { color: var(--text); background: var(--panel); border-color: var(--line); }
+
+/* ---------------------------------------------------------------- panels */
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+}
+@media (min-width: 620px) {
+  .panel-head { flex-direction: row; align-items: flex-start; justify-content: space-between; }
+}
+.panel-head p { margin: 3px 0 0; }
+.panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.inset { padding: 14px 16px; background: var(--inset); }
+
+.crumb {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+/* ---------------------------------------------------------------- forms */
+
+button {
+  background: var(--inset);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  white-space: nowrap;
+}
+button:hover:not(:disabled) { border-color: #38414f; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }
+button.primary { background: #1d3a6b; border-color: #2b5498; color: #dce9ff; }
+button.primary:hover:not(:disabled) { background: #244a89; }
+button.link {
+  background: none;
+  border: none;
+  color: var(--accent);
+  padding: 4px 6px;
+}
+button.more { display: block; margin: 14px auto 0; }
+
+input, select, textarea {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 8px 12px;
+  font: inherit;
+  width: 100%;
+  min-width: 0;
+}
+input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+textarea { resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+input.mini { width: 68px; padding: 5px 8px; text-align: right; }
+
+.row-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 16px;
+}
+.row-form > input:first-child { flex: 1 1 220px; }
+.cap-input {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.toolbar input { flex: 1 1 200px; }
+.toolbar select { flex: 0 0 auto; width: auto; }
+
+/* ---------------------------------------------------------------- tables */
+
+/* Wide tables scroll in their own box. The page never scrolls sideways. */
+.scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+
+table { width: 100%; border-collapse: collapse; }
+th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+td { padding: 10px 14px; border-bottom: 1px solid #1e222c; vertical-align: middle; }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover { background: var(--inset); }
+tr.off { opacity: 0.5; }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cap-col { min-width: 180px; }
+.actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+
+/* Below 720px a row becomes a card: each cell gets its header as a label, so
+   nothing depends on a column heading that has scrolled out of view. */
+@media (max-width: 719px) {
+  table, thead, tbody, tr, td { display: block; width: 100%; }
+  thead { display: none; }
+  tr {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 0;
+  }
+  tr:last-child { border-bottom: none; }
+  td {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 14px;
+    border: none;
+    padding: 5px 14px;
+    text-align: right;
+  }
+  td::before {
+    content: attr(data-label);
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    text-align: left;
+    flex: 0 0 auto;
+  }
+  td:empty { display: none; }
+  .actions { justify-content: flex-end; }
+  .cap-col { min-width: 0; }
+}
+
+/* ---------------------------------------------------------------- stats */
+
+/* Two tiles wide on a phone, as many as fit after that. */
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.tile {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.tile-label {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tile-value {
+  font-size: 21px;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  margin-top: 3px;
+}
+.tile-sub { color: var(--muted); font-size: 12px; }
+.pipeline { margin: 0 0 14px; }
+
+.seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.seg button {
+  flex: 1;
+  background: none;
+  border: none;
+  color: var(--muted);
+  padding: 5px 11px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.seg button:hover:not(.on) { color: var(--text); }
+.seg button.on { background: var(--panel); color: var(--text); }
+
+/* The viewBox is a fixed 100 wide and stretched to whatever room there is, so
+   the bars keep their proportions to each other at any width. Nothing in it is
+   stroked or lettered, which is the only reason the non-uniform scale is safe. */
+.chart { display: block; width: 100%; height: 96px; }
+.chart-slot { fill: #23272f; }
+.chart-bar { fill: var(--accent); }
+.chart-axis {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.split {
+  display: flex;
+  height: 8px;
+  border-radius: 99px;
+  overflow: hidden;
+  background: #23272f;
+}
+.split-a { background: var(--accent); }
+.split-b { background: var(--violet); }
+.split-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 20px;
+  margin-top: 11px;
+  font-size: 13px;
+}
+.key {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 2px;
+  margin-right: 6px;
+}
+.key-a { background: var(--accent); }
+.key-b { background: var(--violet); }
+
+/* ---------------------------------------------------------------- bits */
+
+.muted { color: var(--muted); }
+.small { font-size: 12.5px; }
+.error { color: var(--red); }
+.error.banner {
+  background: #2a1618;
+  border: 1px solid #4a2327;
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+.ok { color: var(--green); }
+.bad { color: var(--amber); margin-top: 8px; }
+.conf { color: var(--muted); font-size: 11.5px; }
+
+.result {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.result .bad { flex-basis: 100%; }
+
+.pill {
+  display: inline-block;
+  padding: 2px 9px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.pill-queued { background: #1d2b45; color: #7fb0ff; }
+.pill-handed_out { background: #2a2340; color: #c4a6ff; }
+.pill-followed { background: #16301d; color: #57d16c; }
+.pill-review { background: #33280f; color: #e3b341; }
+.pill-failed, .pill-rejected { background: #3a1d1f; color: #ff8085; }
+.pill-skipped, .pill-none { background: #23272f; color: var(--muted); }
+.pill-extracted { background: #16301d; color: #57d16c; }
+.pill-partial { background: #33280f; color: #e3b341; }
+.pill-received, .pill-extracting { background: #1d2b45; color: #7fb0ff; }
+
+.src { font-size: 11.5px; color: var(--muted); }
+.src-manual { color: var(--violet); }
+
+.cap { display: flex; align-items: center; gap: 10px; }
+.cap-track {
+  flex: 1;
+  min-width: 70px;
+  height: 6px;
+  background: #23272f;
+  border-radius: 99px;
+  overflow: hidden;
+}
+.cap-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+.cap-label {
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: right;
+}

@@ -1,0 +1,11 @@
+# node_modules is reinstalled inside the image; copying the host's costs a
+# multi-hundred-megabyte build context and can smuggle in platform-specific
+# native builds that then fail at runtime.
+node_modules
+dist
+.storage
+.env
+api.log
+api.err
+test
+*.spec.ts

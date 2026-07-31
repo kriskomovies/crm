@@ -1,0 +1,136 @@
+# Whole stack on one VPS. Everything here is swappable for a managed service
+# later without touching application code: Postgres -> RDS, MinIO -> S3/R2,
+# Redis -> Elasticache.
+#
+# The api and the worker run the SAME image with different entrypoints. The
+# split is not cosmetic: an extraction holds an HTTP call open for 45-75s, so
+# doing that in the request path would time out the upload. The api returns 202
+# and the worker does the waiting.
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-snap}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-snap}
+      POSTGRES_DB: ${POSTGRES_DB:-snap}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-snap}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Bound to loopback, not 0.0.0.0. On a VPS a bare '5432:5432' publishes the
+    # database to the internet, and Docker writes its own iptables rules, so a
+    # host firewall does not save you. Reach it over an SSH tunnel.
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes']
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'mc', 'ready', 'local']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # Loopback only, same reason as the database: this holds every uploaded
+    # screenshot and the console accepts the root credentials.
+    ports:
+      - '127.0.0.1:${MINIO_PORT:-9000}:9000'
+      - '127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001'
+
+  api:
+    build:
+      context: ./server
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment: &app-env
+      DATABASE_URL: postgresql://${POSTGRES_USER:-snap}:${POSTGRES_PASSWORD:-snap}@db:5432/${POSTGRES_DB:-snap}
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      MINIO_ENDPOINT: minio
+      MINIO_PORT: '9000'
+      MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+      MINIO_BUCKET: ${MINIO_BUCKET:-sheets}
+      # Never bake this into the image. Rotate the key that was pasted in chat.
+      APIMART_API_KEY: ${APIMART_API_KEY:?set APIMART_API_KEY in .env}
+      APIMART_BASE_URL: ${APIMART_BASE_URL:-https://api.apimart.ai/v1}
+      NODE_ENV: production
+    command: ['node', 'dist/main.js']
+    # Deliberately NOT published. Caddy reaches it on the compose network and is
+    # the only ingress; publishing 3000 would put an unencrypted API alongside
+    # the TLS one, and every agent's key would travel in clear on whichever it
+    # happened to use.
+    expose:
+      - '3000'
+
+  worker:
+    build:
+      context: ./server
+    restart: unless-stopped
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    environment:
+      <<: *app-env
+      # One process holds many concurrent extractions: each is 45-75s of
+      # network waiting, not CPU. At 20k sheets/day ~14 need to be in flight.
+      EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-16}
+    command: ['node', 'dist/worker.js']
+
+  # Caddy serves the built UI, terminates TLS, and is the only thing published.
+  # It also injects the operator API key into /api/* -- the browser must never
+  # hold that key, since it grants a client's entire book of business.
+  web:
+    build:
+      context: ./web
+    restart: unless-stopped
+    depends_on: [api]
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS, e.g. targets.example.com}
+      SNAP_API_KEY: ${OPERATOR_API_KEY:?set OPERATOR_API_KEY}
+      UI_USER: ${UI_USER:?set UI_USER}
+      # caddy hash-password --plaintext '...'
+      UI_PASSWORD_HASH: ${UI_PASSWORD_HASH:?set UI_PASSWORD_HASH}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - '80:80'
+      - '443:443'
+
+volumes:
+  db-data:
+  redis-data:
+  minio-data:
+  # Caddy's issued certificates. Losing this volume means re-issuing on every
+  # restart, which Let's Encrypt rate-limits.
+  caddy-data:
+  caddy-config:

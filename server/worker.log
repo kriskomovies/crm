@@ -1,0 +1,11 @@
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [NestFactory] Starting Nest application...
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] BullModule dependencies initialized +16ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +36ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] DiscoveryModule dependencies initialized +31ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] CoreModule dependencies initialized +5ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] WorkerModule dependencies initialized +5ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +4ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] BullModule dependencies initialized +3ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [InstanceLoader] BullModule dependencies initialized +0ms
+[Nest] 90456  - 07/30/2026, 11:18:12 PM     LOG [StorageService] storage: local filesystem at C:\Users\Krisko\Desktop\snap-automation\server\.storage
+[Nest] 90456  - 07/30/2026, 11:21:45 PM     LOG [ExtractProcessor] extracting sheet 70601795-1431-43fb-9dd6-cf5382f520cb (attempt 1)

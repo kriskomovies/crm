@@ -1,0 +1,290 @@
+// Follow-target service schema.
+//
+// Two constraints carry the whole product and everything else is bookkeeping:
+//
+//   Person     @@unique([personalityId, handle])  -- a person exists ONCE per
+//              personality, however many of that personality's accounts saw them.
+//   Assignment @@unique([personId])               -- and is handed to exactly one
+//              account, ever.
+//
+// Together they are the "don't follow the same person twice" rule, enforced by
+// the database rather than by application logic, because three accounts
+// uploading overlapping Quick Add lists concurrently is the normal case here,
+// not an edge case. A race that slips past an application-level check would
+// burn a follow slot silently.
+//
+// The uniqueness is scoped to the personality and NOT globally, deliberately.
+// Two personalities following the same person is expected and must stay legal:
+// they are separate personas with separate audiences, and a global unique on
+// handle would make the second one silently unable to grow.
+//
+// Naming: `Personality` is what the business calls a "model" (e.g. "kris"). The
+// word "model" is avoided in code because it means an LLM everywhere else in
+// this repo, and `person.model` would be genuinely ambiguous.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// The paying organisation. Owns personalities, filter rules and the budget.
+model Client {
+  id        String   @id @default(uuid())
+  name      String
+  apiKeyHash String  @unique
+  createdAt DateTime @default(now())
+
+  /// Which VLM to extract with. Per-client because the accuracy/cost trade-off
+  /// is a commercial decision: see vlm_eval/ROUTING.md.
+  extractionModel String @default("gemini-3.6-flash")
+  /// Opt-in second avatar-only pass. Halves the women in the "man" bucket
+  /// (2.1% -> 1.1%) for +$0.29/1000. Only worth it for country lists that the
+  /// dry-run shows are contaminated.
+  avatarPassEnabled Boolean @default(false)
+  /// Hard stop. At $0.74/1000 profiles a looping uploader spends four figures
+  /// in a day, so this is enforced from day one, not "later".
+  monthlyBudgetUsd Decimal @default(100) @db.Decimal(10, 2)
+
+  personalities Personality[]
+  filterRules   FilterRule[]
+
+  @@map("clients")
+}
+
+/// A "model" in the business sense -- kris. THE DEDUPE SCOPE.
+model Personality {
+  id        String   @id @default(uuid())
+  clientId  String
+  name      String
+  createdAt DateTime @default(now())
+
+  client   Client    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  accounts Account[]
+  people   Person[]
+
+  @@unique([clientId, name])
+  @@map("personalities")
+}
+
+/// One Snapchat account belonging to a personality. Uploads sheets, receives
+/// targets. A personality runs up to about ten of these.
+model Account {
+  id            String   @id @default(uuid())
+  personalityId String
+  label         String
+  /// Targets handed out per day. Protects the account from rate-limiting; the
+  /// server meters handout rather than trusting the client to pace itself.
+  dailyCap      Int      @default(50)
+  enabled       Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  personality Personality  @relation(fields: [personalityId], references: [id], onDelete: Cascade)
+  sheets      Sheet[]
+  assignments Assignment[]
+
+  @@unique([personalityId, label])
+  @@map("accounts")
+}
+
+enum SheetStatus {
+  received
+  extracting
+  extracted
+  /// Some rows came back malformed and were salvaged; the rest are usable.
+  partial
+  failed
+  /// The extraction was rejected as untrustworthy -- see Extraction.distinctCuesRatio.
+  rejected
+}
+
+model Sheet {
+  id         String      @id @default(uuid())
+  accountId  String
+  /// Content hash. Re-uploading the same image is free and idempotent.
+  sha256     String
+  storageKey String
+  width      Int?
+  height     Int?
+  status     SheetStatus @default(received)
+  error      String?
+  receivedAt DateTime    @default(now())
+
+  account    Account      @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  extraction Extraction?
+  people     Person[]
+
+  @@unique([accountId, sha256])
+  @@index([status])
+  /// Every /api/stats block that touches cost or throughput filters sheets by
+  /// receivedAt over a window, optionally narrowed to one personality's
+  /// accounts. Neither existing index can serve a date range: (accountId,
+  /// sha256) sorts by a hash and (status) has no date in it at all.
+  @@index([accountId, receivedAt])
+  @@map("sheets")
+}
+
+/// One VLM call. The raw reply is kept verbatim so re-filtering and re-scoring
+/// never cost another model call -- when a client edits their country list we
+/// replay the filter over stored rows instead of re-paying for vision.
+model Extraction {
+  id               String   @id @default(uuid())
+  sheetId          String   @unique
+  model            String
+  promptTokens     Int      @default(0)
+  completionTokens Int      @default(0)
+  usd              Decimal  @default(0) @db.Decimal(10, 6)
+  seconds          Float    @default(0)
+  rawReply         Json
+  profilesFound    Int      @default(0)
+  /// distinct avatar descriptions / entries. A model that emits the same
+  /// sentence for every face has stopped reading pixels and its labels are
+  /// worthless however confident they look -- gpt-4.1-mini produced ONE
+  /// description for 94 of 99 faces in testing. Low ratio => reject the sheet.
+  distinctCuesRatio Float?
+  createdAt        DateTime @default(now())
+
+  sheet Sheet @relation(fields: [sheetId], references: [id], onDelete: Cascade)
+
+  @@map("extractions")
+}
+
+enum Presents {
+  man
+  woman
+  ambiguous
+  not_a_person
+  unknown
+}
+
+/// Where a handle came from: a contact-sheet screenshot, or someone typing it.
+enum PersonSource {
+  extraction
+  manual
+}
+
+/// A discovered profile. Unique per personality -- this row IS the dedupe ledger.
+model Person {
+  id            String @id @default(uuid())
+  personalityId String
+  /// Normalised (casefolded, @-stripped) handle. The dedupe key.
+  handle        String
+  displayName   String
+
+  /// How this handle reached the personality. Manual adds skip the filter --
+  /// an operator naming a handle has already made the decision the filter
+  /// exists to make, and a manual add carries no avatar or country for it to
+  /// judge on anyway.
+  source PersonSource @default(extraction)
+
+  presentsAs       Presents @default(unknown)
+  /// Judged from the avatar alone, with the name hidden.
+  avatarPresentsAs Presents @default(unknown)
+  /// Judged from the display name alone, with the avatar hidden. When these two
+  /// disagree the profile goes to review rather than being forwarded -- that
+  /// disagreement caught a woman the combined judgement would have forwarded.
+  namePresentsAs   Presents @default(unknown)
+
+  nationality      String?
+  nationalityConf  String?
+  avatarCues       String?
+
+  firstSeenSheetId String?
+  timesSeen        Int      @default(1)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  personality    Personality @relation(fields: [personalityId], references: [id], onDelete: Cascade)
+  firstSeenSheet Sheet?      @relation(fields: [firstSeenSheetId], references: [id], onDelete: SetNull)
+  assignment     Assignment?
+  overrides      Override[]
+
+  @@unique([personalityId, handle])
+  @@index([personalityId, presentsAs, nationality])
+  /// /api/stats counts people by day, by country and by source, always over a
+  /// createdAt window and usually for one personality. Scoped first because
+  /// that is the query that has to stay cheap as the ledger grows; the
+  /// unscoped rollup has to visit every personality anyway, and degrades to a
+  /// full scan of this index rather than of the table.
+  @@index([personalityId, createdAt])
+  @@map("people")
+}
+
+enum AssignmentState {
+  /// Matched the filter, waiting for its account to ask for work.
+  queued
+  /// Given to the account; counts against today's cap.
+  handed_out
+  followed
+  failed
+  skipped
+  /// Held for a human: low confidence, or avatar and name disagreed.
+  review
+}
+
+/// Which account is to follow this person. One per person, enforced by the
+/// database, so two of kris's accounts can never both be told to follow @john.
+/// Scoped through Person, so mia's account holding @john is unaffected.
+model Assignment {
+  id         String          @id @default(uuid())
+  personId   String          @unique
+  accountId  String
+  state      AssignmentState @default(queued)
+  reason     String?
+  handedOutAt DateTime?
+  resultAt   DateTime?
+  note       String?
+  createdAt  DateTime        @default(now())
+
+  person  Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId, state])
+  @@index([accountId, handedOutAt])
+  /// /api/stats buckets assignments by state over a createdAt window. The
+  /// (accountId, state) index above answers "how deep is this queue right
+  /// now", which is a different question with no date in it.
+  @@index([accountId, createdAt])
+  @@map("assignments")
+}
+
+/// Ordered predicates. Evaluated in order; first match wins.
+model FilterRule {
+  id        String   @id @default(uuid())
+  clientId  String
+  position  Int
+  enabled   Boolean  @default(true)
+  /// Empty = any. Normally ["man"].
+  presentsAs String[]
+  /// Empty = any. Lowercased adjectives: ["italian","turkish"].
+  countries  String[]
+  minConfidence String @default("medium")
+  /// forward | review | reject
+  action    String   @default("forward")
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, position])
+  @@map("filter_rules")
+}
+
+/// A human correction. Wins over model output, and doubles as labelled eval
+/// data -- the balanced set vlm_eval/ROUTING.md says is needed before any
+/// client contract quotes an accuracy number has to come from somewhere.
+model Override {
+  id        String   @id @default(uuid())
+  personId  String
+  field     String
+  value     String
+  userId    String?
+  createdAt DateTime @default(now())
+
+  person Person @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([personId, field])
+  @@map("overrides")
+}

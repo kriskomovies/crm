@@ -1,0 +1,46 @@
+# Terminates TLS and splits the two audiences, which authenticate differently.
+#
+#   /v1/*   the emulator agents. Each carries its OWN per-client API key, so
+#           this must pass Authorization through untouched and must NOT sit
+#           behind the operator login.
+#   /api/*  the operator UI. The browser holds no credential -- the key grants
+#           a client's whole book of business and cannot be shipped to a
+#           browser -- so Caddy injects it here, exactly as the Vite dev proxy
+#           does locally. That makes this the seam where the UI is authorised,
+#           and therefore the seam that has to be locked.
+#   /       the static bundle.
+#
+# Without the basic_auth block below, anyone reaching this host would get an
+# operator session, because the injected key is all /api/* asks for.
+
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# Agents: pass through, no injection, no operator login.
+	handle /v1/* {
+		reverse_proxy api:3000
+	}
+
+	handle /api/* {
+		basic_auth {
+			{$UI_USER} {$UI_PASSWORD_HASH}
+		}
+		reverse_proxy api:3000 {
+			header_up Authorization "Bearer {$SNAP_API_KEY}"
+		}
+	}
+
+	handle {
+		basic_auth {
+			{$UI_USER} {$UI_PASSWORD_HASH}
+		}
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	# A sheet is ~1.2MB and the default body limit is smaller than that.
+	request_body {
+		max_size 25MB
+	}
+}
