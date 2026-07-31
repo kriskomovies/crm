@@ -1,14 +1,15 @@
 # Secrets. .env carries the vision-model key, the database password and the
 # operator login -- committing it is the whole compromise in one file.
+# These are listed explicitly rather than relying on the generic .env rules
+# below, because the point is too important to leave to a pattern.
 .env
 server/.env
 vlm_eval/.apimart_key
 
-node_modules/
-dist/
-build/
-__pycache__/
-*.pyc
+# The template ships .env.* too. Keep the negation: .env.example is the
+# deployment checklist and is meant to be committed.
+.env.*
+!.env.example
 
 # Local runtime state, never an image or a repo
 server/.storage/
@@ -20,3 +21,67 @@ vlm_eval/results/
 # Caddy's issued certificates
 caddy-data/
 caddy-config/
+
+# Python (vlm_eval)
+__pycache__/
+*.pyc
+
+# --- Node, from the GitHub template that initialised this repo ---
+
+# Dependencies
+node_modules/
+jspm_packages/
+web_modules/
+.pnpm-store
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/sdks
+!.yarn/versions
+.pnp.*
+.yarn-integrity
+
+# Build output
+dist/
+build/
+out
+*.tgz
+
+# Logs and diagnostics
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+lerna-debug.log*
+report.[0-9]*.[0-9]*.[0-9]*.[0-9]*.json
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage
+*.lcov
+.nyc_output
+lib-cov
+
+# Caches
+.npm
+.cache
+.parcel-cache
+.eslintcache
+.stylelintcache
+.node_repl_history
+*.tsbuildinfo
+
+# Vite
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+.vite/
+
+# Editor / test tooling
+.vscode-test
