@@ -7,5 +7,7 @@ dist
 .env
 api.log
 api.err
+worker.log
+worker.err
 test
 *.spec.ts

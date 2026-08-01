@@ -1,0 +1,23 @@
+{
+  "name": "crm",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Follow-target service: screenshot ingest, VLM extraction, per-personality dedupe ledger, metered handout",
+  "scripts": {
+    "setup": "npm --prefix server install && npm --prefix web install && npm --prefix server run prisma:generate",
+    "migrate": "npm --prefix server run prisma:deploy",
+    "seed": "npm --prefix server run seed",
+    "build": "npm --prefix server run build && npm --prefix web run build",
+    "api": "npm --prefix server run start:prod",
+    "api:dev": "npm --prefix server run start:dev",
+    "worker": "npm --prefix server run worker",
+    "web": "npm --prefix web run dev",
+    "test": "npm --prefix server test",
+    "test:unit": "npm --prefix server exec -- vitest run --project unit",
+    "lint": "npm --prefix server run lint"
+  },
+  "comments": {
+    "why-no-workspaces": "server/ and web/ keep their own node_modules on purpose. npm workspaces would hoist them to the root, and Prisma resolves its generated client and native query engine relative to the package that owns the schema -- hoisting has broken that in the past. These scripts only forward to the two packages, so nothing about their installs changes.",
+    "order": "npm run setup, then start Postgres, then npm run migrate, then npm run api and npm run web in two shells."
+  }
+}
