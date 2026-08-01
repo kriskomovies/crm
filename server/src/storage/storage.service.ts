@@ -1,14 +1,20 @@
 /**
  * Object storage for uploaded sheets (MinIO locally, S3/R2 unchanged in prod).
  *
- * Images are kept rather than discarded after extraction for two reasons that
- * both cost money if ignored: the CRM shows the sheet beside its extracted rows
- * so a human can spot errors, and re-running a corrected prompt over stored
- * images is far cheaper than asking clients to re-upload.
+ * Images are kept AFTER extraction, for a window, for two reasons that both
+ * cost money if ignored: the CRM can show the sheet beside its extracted rows
+ * so a human can spot errors, and re-running a corrected prompt over a stored
+ * image is far cheaper than asking a client to re-upload.
+ *
+ * That justification has a shelf life, and until RetentionService existed it had
+ * none. A sheet is ~1.2 MB and the design target is 20,000 a day: 24 GB a day,
+ * 8.8 TB a year, on one VPS volume, of images nothing reads after the single
+ * extraction call. `remove` is what makes the window a window -- see
+ * retention.service.ts for what closes it.
  */
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Client as MinioClient } from 'minio';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 
 /**
@@ -79,6 +85,23 @@ export class StorageService implements OnModuleInit {
     const buf = await this.get(key);
     const mime = key.endsWith('.jpg') || key.endsWith('.jpeg') ? 'image/jpeg' : 'image/png';
     return `data:${mime};base64,${buf.toString('base64')}`;
+  }
+
+  /**
+   * Delete one object. Idempotent on purpose: a key that is already gone is a
+   * success, not an error.
+   *
+   * Retention runs repeatedly over overlapping windows and a crash mid-sweep
+   * must be safe to retry, so "already deleted" has to be indistinguishable
+   * from "deleted now". Both drivers are forgiving here -- `rm` with force,
+   * and MinIO's removeObject, which does not fault on a missing key.
+   */
+  async remove(key: string): Promise<void> {
+    if (this.local) {
+      await rm(join(this.localRoot, key), { force: true });
+      return;
+    }
+    await this.client!.removeObject(this.bucket, key);
   }
 
   /** Short-lived URL so the CRM can show the image without proxying it. */

@@ -15,6 +15,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { AssignmentState } from '@prisma/client';
@@ -23,6 +24,7 @@ import { pageSize, slicePage } from '../common/pagination';
 import { isPlausibleHandle, normHandle } from '../extraction/normalize';
 import { PipelineService } from '../pipeline/pipeline.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { RetentionService } from '../retention/retention.service';
 
 export interface AttachResult {
   added: string[];
@@ -40,9 +42,12 @@ const MAX_SEARCH = 100;
 
 @Injectable()
 export class PersonalitiesService {
+  private readonly log = new Logger(PersonalitiesService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly pipeline: PipelineService,
+    private readonly retention: RetentionService,
   ) {}
 
   /**
@@ -250,7 +255,25 @@ export class PersonalitiesService {
   /** Delete a personality and everything hanging off it. */
   async remove(clientId: string, personalityId: string): Promise<void> {
     await this.assertExists(clientId, personalityId);
+
+    // Collect the storage keys BEFORE the cascade, and delete the objects
+    // first. Personality -> Account -> Sheet is ON DELETE CASCADE, so the rows
+    // holding every storageKey are about to vanish; anything not removed now
+    // stays on disk forever with nothing left in the database that knows its
+    // name. Orphans are not merely wasted space, they are unfindable waste.
+    const sheets = await this.prisma.sheet.findMany({
+      where: { account: { personalityId }, storageKey: { not: null } },
+      select: { storageKey: true },
+    });
+    const purged = await this.retention.purgeKeys(sheets.map((s) => s.storageKey));
+
     await this.prisma.personality.delete({ where: { id: personalityId } });
+
+    if (sheets.length) {
+      this.log.log(
+        `personality ${personalityId} deleted: purged ${purged}/${sheets.length} sheet image(s)`,
+      );
+    }
   }
 
   /**

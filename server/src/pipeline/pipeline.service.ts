@@ -68,6 +68,18 @@ export class PipelineService {
       data: { status: 'extracting' },
     });
 
+    if (!sheet.storageKey) {
+      // Retention removed the image before this job ran. It only prunes sheets
+      // in a terminal status, so reaching here means the row was re-queued
+      // after being pruned -- there is nothing to send the model, and failing
+      // loudly beats a confusing gateway error about an empty image.
+      await this.prisma.sheet.update({
+        where: { id: sheetId },
+        data: { status: 'failed', error: 'image deleted by retention' },
+      });
+      return;
+    }
+
     try {
       const entries = await this.extract(sheetId, sheet.storageKey, client);
       const people = await this.resolve(sheet.account.personalityId, sheetId, entries);

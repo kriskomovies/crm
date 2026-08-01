@@ -21,6 +21,7 @@ import {
   Controller,
   DefaultValuePipe,
   Get,
+  GoneException,
   NotFoundException,
   Param,
   ParseIntPipe,
@@ -147,6 +148,16 @@ export class CrmController {
       select: { storageKey: true },
     });
     if (!sheet) throw new NotFoundException();
+    // The row outlives the image: retention deletes the pixels after
+    // SHEET_RETENTION_DAYS and nulls the pointer. 410 rather than 404 because
+    // the sheet is real and its extracted rows are still here -- only the
+    // screenshot is gone, and a caller that cannot tell those apart will retry
+    // a URL that is never coming back.
+    if (!sheet.storageKey) {
+      throw new GoneException(
+        'the image for this sheet has been deleted by retention; its extracted rows remain',
+      );
+    }
     return { url: await this.storage.presign(sheet.storageKey) };
   }
 }

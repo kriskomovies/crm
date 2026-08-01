@@ -106,7 +106,14 @@ model Sheet {
   accountId  String
   /// Content hash. Re-uploading the same image is free and idempotent.
   sha256     String
-  storageKey String
+  /// Where the image lives, or NULL once retention has deleted it.
+  ///
+  /// Nullable so that "the image is gone" is a fact the database states rather
+  /// than one a caller discovers from a 404. The row itself is kept: it is one
+  /// small row, it carries the cost and throughput numbers /api/stats is built
+  /// from, and its (accountId, sha256) uniqueness is what makes a re-upload
+  /// free. Only the ~1.2 MB of pixels goes. See retention.service.ts.
+  storageKey String?
   width      Int?
   height     Int?
   status     SheetStatus @default(received)

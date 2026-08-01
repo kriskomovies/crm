@@ -11,6 +11,7 @@ import { PersonalitiesService } from './personalities/personalities.service';
 import { ExtractProcessor } from './pipeline/extract.processor';
 import { PipelineService } from './pipeline/pipeline.service';
 import { PrismaService } from './prisma/prisma.service';
+import { RetentionService } from './retention/retention.service';
 import { SheetsController } from './sheets/sheets.controller';
 import { StatsController } from './stats/stats.controller';
 import { StatsService } from './stats/stats.service';
@@ -48,6 +49,7 @@ import { TargetsService } from './targets/targets.service';
     TargetsService,
     PersonalitiesService,
     StatsService,
+    RetentionService,
     ApiKeyGuard,
   ],
   exports: [
@@ -59,6 +61,7 @@ import { TargetsService } from './targets/targets.service';
     TargetsService,
     PersonalitiesService,
     StatsService,
+    RetentionService,
   ],
 })
 export class CoreModule {}

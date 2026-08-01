@@ -79,6 +79,37 @@ docker compose up -d --build
 DNS must already point at the box or Caddy cannot issue a certificate. Only
 80/443 are published; Postgres and MinIO bind loopback.
 
+## Retention — the setting that decides whether the disk fills
+
+A sheet is ~1.2 MB and the design target is 20,000 a day: **~24 GB/day, ~8.8
+TB/year** of images that are read exactly once, by the extraction call. Until
+`SHEET_RETENTION_DAYS` existed there were two write paths into object storage
+and no delete path at all.
+
+```bash
+SHEET_RETENTION_DAYS=14     # 0 keeps every image forever
+RETENTION_SWEEP_MINUTES=60
+```
+
+The worker sweeps hourly and deletes the stored image of any sheet older than
+the window whose status is terminal — never one still `received` or
+`extracting`, because a queued job is about to ask for those bytes. What
+survives:
+
+| | |
+|---|---|
+| the `Sheet` row | kept — a few hundred bytes carrying the cost and throughput history `/api/stats` reports, and the `(accountId, sha256)` uniqueness that makes a client's retry after a network blip free |
+| `Extraction.rawReply` | kept — the model's verbatim answer, ~18 KB before TOAST. Replaying `filter`/`allocate` after a rule change reads this, never the image |
+| the image | deleted |
+
+`storageKey` becomes NULL, so "pruned" is a fact the database states rather than
+a 404 a caller infers. `GET /api/sheets/:id/image` answers **410 Gone** for those,
+not 404: the sheet and its rows are still there, only the screenshot is not.
+
+Deleting a personality also purges its images first, before the cascade destroys
+the rows holding their keys — otherwise those objects survive with nothing left
+in the database that knows their names.
+
 ## Known gaps
 
 - `Client.monthlyBudgetUsd` is enforced nowhere. At ~$0.08 a sheet an uploader

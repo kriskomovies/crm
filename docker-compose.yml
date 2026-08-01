@@ -80,7 +80,15 @@ services:
       # Never bake this into the image. Rotate the key that was pasted in chat.
       APIMART_API_KEY: ${APIMART_API_KEY:?set APIMART_API_KEY in .env}
       APIMART_BASE_URL: ${APIMART_BASE_URL:-https://api.apimart.ai/v1}
+      SHEET_RETENTION_DAYS: ${SHEET_RETENTION_DAYS:-14}
+      RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-60}
       NODE_ENV: production
+      # Only the worker sweeps. Both services import CoreModule, so leaving the
+      # sweep on here too would have two processes selecting the same rows and
+      # racing on the same object keys every hour. The API still purges images
+      # synchronously when a personality is deleted -- that path is
+      # request-driven and must run wherever the request lands.
+      RETENTION_SWEEP: 'off'
     command: ['node', 'dist/main.js']
     # Deliberately NOT published. Caddy reaches it on the compose network and is
     # the only ingress; publishing 3000 would put an unencrypted API alongside
@@ -102,6 +110,9 @@ services:
       # One process holds many concurrent extractions: each is 45-75s of
       # network waiting, not CPU. At 20k sheets/day ~14 need to be in flight.
       EXTRACT_CONCURRENCY: ${EXTRACT_CONCURRENCY:-16}
+      # Undoes the 'off' inherited from *app-env. The worker is the process that
+      # owns background work, so it is the one that sweeps expired sheet images.
+      RETENTION_SWEEP: 'on'
     command: ['node', 'dist/worker.js']
 
   # Caddy serves the built UI, terminates TLS, and is the only thing published.
