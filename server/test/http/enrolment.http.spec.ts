@@ -9,7 +9,7 @@
  * The property that matters: with no window open, an anonymous caller gets
  * nothing. Everything else here is a corollary.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { dropFixtures, makeClient, prisma } from '../fixtures';
 import { bootHarness, Harness } from './app';
@@ -19,6 +19,24 @@ let api: Harness;
 beforeAll(async () => {
   api = await bootHarness();
 });
+
+/**
+ * Close every window before each test, including on clients this file did not
+ * create.
+ *
+ * enrol() looks at ALL clients globally -- it has to, the caller has no
+ * credential and cannot say who it is -- so any seeded or demo client left with
+ * a window open changes the answer here. Without this, opening a real window on
+ * the dev database (which is exactly what you do while setting a machine up)
+ * turned "enrolment is closed" into "enrolment is open" and "open on one
+ * client" into "ambiguous", and seven tests went red for a reason that had
+ * nothing to do with the code. dropFixtures only removes what the fixtures
+ * made, so it cannot cover this.
+ */
+beforeEach(async () => {
+  await prisma.client.updateMany({ data: { enrolOpenUntil: null } });
+});
+
 afterEach(dropFixtures);
 afterAll(async () => {
   await api?.close();
@@ -39,9 +57,11 @@ describe('POST /v1/enrol with no window open', () => {
   });
 
   it('issues no key', async () => {
-    await makeClient();
+    const c = await makeClient();
     await enrol();
-    expect(await prisma.apiKey.count()).toBe(0);
+    // Scoped to this client: the count is global, and any machine enrolled
+    // against the dev database for real would make a bare count() nonzero.
+    expect(await prisma.apiKey.count({ where: { clientId: c.id } })).toBe(0);
   });
 });
 
@@ -123,7 +143,7 @@ describe('the window is a deadline, not a flag', () => {
     });
     const res = await enrol();
     expect(res.status).toBe(400);
-    expect(await prisma.apiKey.count()).toBe(0);
+    expect(await prisma.apiKey.count({ where: { clientId: c.id } })).toBe(0);
   });
 
   it('two clients open at once is refused rather than guessed', async () => {
@@ -140,6 +160,8 @@ describe('the window is a deadline, not a flag', () => {
     // and the ledger is the product.
     expect(res.status).toBe(400);
     expect(String(res.body?.message)).toMatch(/ambiguous/i);
-    expect(await prisma.apiKey.count()).toBe(0);
+    expect(
+      await prisma.apiKey.count({ where: { clientId: { in: [a.id, b.id] } } }),
+    ).toBe(0);
   });
 });
