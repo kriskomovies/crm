@@ -13,11 +13,18 @@
  *   N   keep N days, then sweep
  *   <0  keep forever
  *
- * SHEET_FAILED_RETENTION_DAYS (default 7)
- *   Failed and rejected sheets keep their image for this long whatever the
- *   above says. They are the only ones worth looking at -- when a sheet comes
- *   back garbled you cannot tell a bad capture from a bad model without the
- *   image -- and they are rare, so the window is nearly free.
+ * SHEET_FAILED_KEEP_MAX (default 200)
+ *   Failed and rejected sheets are the only ones anyone ever looks at: when a
+ *   sheet comes back garbled you cannot tell a bad capture from a bad model
+ *   without the image. But failure has no completion event -- that is what
+ *   failure means -- so there is nothing to trigger on.
+ *
+ *   A COUNT, not an age. The thing being protected is the disk, so bound the
+ *   disk: the newest N failures keep their image and everything older loses it,
+ *   which costs at most N x ~1.2 MB no matter what the failure rate does. An
+ *   age bound is unbounded in exactly the case that matters -- a gateway
+ *   outage failing every sheet for a day writes 20,000 images that an age rule
+ *   then holds for its whole window.
  *
  * WHY NOT DELETE THE INSTANT EXTRACTION RETURNS: run() continues into resolve,
  * filter and allocate. A throw in any of them fails the job, BullMQ retries it,
@@ -57,7 +64,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   private running = false;
 
   private readonly days = Number(process.env.SHEET_RETENTION_DAYS ?? 0);
-  private readonly failedDays = Number(process.env.SHEET_FAILED_RETENTION_DAYS ?? 7);
+  private readonly failedKeepMax = Number(process.env.SHEET_FAILED_KEEP_MAX ?? 200);
   private readonly everyMs =
     Number(process.env.RETENTION_SWEEP_MINUTES ?? 60) * 60_000;
 
@@ -81,12 +88,14 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
 
   onModuleInit(): void {
     this.log.log(
-      this.days === 0
-        ? 'retention: deleting sheet images as soon as the pipeline completes' +
-            `, failures kept ${this.failedDays}d`
+      (this.days === 0
+        ? 'retention: deleting sheet images as soon as the pipeline completes'
         : this.days < 0
           ? 'retention: keeping every sheet image forever (SHEET_RETENTION_DAYS<0)'
-          : `retention: keeping sheet images ${this.days}d, failures ${this.failedDays}d`,
+          : `retention: keeping sheet images ${this.days}d`) +
+        (this.failedKeepMax < 0
+          ? ', all failures kept'
+          : `, newest ${this.failedKeepMax} failures kept`),
     );
     if (!this.sweeps) {
       this.log.log('retention: sweeping disabled in this process (RETENTION_SWEEP=off)');
@@ -158,8 +167,8 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
         failed += r.failed;
       }
 
-      if (this.failedDays >= 0) {
-        const r = await this.prune(FAILED, this.ago(now, this.failedDays));
+      if (this.failedKeepMax >= 0) {
+        const r = await this.pruneBeyondNewest(FAILED, this.failedKeepMax);
         deleted += r.deleted;
         failed += r.failed;
       }
@@ -201,32 +210,78 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       });
       if (batch.length === 0) break;
 
-      for (const sheet of batch) {
-        try {
-          await this.storage.remove(sheet.storageKey!);
-          await this.prisma.sheet.update({
-            where: { id: sheet.id },
-            data: { storageKey: null },
-          });
-          deleted++;
-        } catch (err) {
-          // Leave storageKey set. The object may still exist, and a pointer to
-          // a live object is recoverable where a null pointer to one is not:
-          // nothing could ever find that object again to delete it.
-          failed++;
-          this.log.error(
-            `retention: could not delete ${sheet.storageKey} for sheet ${sheet.id}: ${
-              (err as Error).message
-            }`,
-          );
-        }
-      }
+      const r = await this.deleteAll(batch);
+      deleted += r.deleted;
+      failed += r.failed;
 
       // A batch that failed entirely would loop forever re-selecting the same
       // rows, since nothing about them changed.
-      if (batch.length < BATCH || deleted === 0) break;
+      if (batch.length < BATCH || r.deleted === 0) break;
     }
 
+    return { deleted, failed };
+  }
+
+  /**
+   * Keep the newest `keep` images for these statuses and delete every older
+   * one. A count rather than an age, because what is being protected is the
+   * disk: this costs at most `keep` images whatever the failure rate does.
+   */
+  private async pruneBeyondNewest(
+    statuses: SheetStatus[],
+    keep: number,
+  ): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0;
+    let failed = 0;
+
+    for (;;) {
+      // `skip` stays correct as the sweep proceeds: deleting sets storageKey to
+      // null, which removes the row from this filter entirely, so the newest
+      // `keep` survivors are always the ones skipped over.
+      const batch = await this.prisma.sheet.findMany({
+        where: { storageKey: { not: null }, status: { in: statuses } },
+        select: { id: true, storageKey: true },
+        orderBy: { receivedAt: 'desc' },
+        skip: keep,
+        take: BATCH,
+      });
+      if (batch.length === 0) break;
+
+      const r = await this.deleteAll(batch);
+      deleted += r.deleted;
+      failed += r.failed;
+
+      if (batch.length < BATCH || r.deleted === 0) break;
+    }
+
+    return { deleted, failed };
+  }
+
+  private async deleteAll(
+    batch: { id: string; storageKey: string | null }[],
+  ): Promise<{ deleted: number; failed: number }> {
+    let deleted = 0;
+    let failed = 0;
+    for (const sheet of batch) {
+      try {
+        await this.storage.remove(sheet.storageKey!);
+        await this.prisma.sheet.update({
+          where: { id: sheet.id },
+          data: { storageKey: null },
+        });
+        deleted++;
+      } catch (err) {
+        // Leave storageKey set. The object may still exist, and a pointer to a
+        // live object is recoverable where a null pointer to one is not:
+        // nothing could ever find that object again to delete it.
+        failed++;
+        this.log.error(
+          `retention: could not delete ${sheet.storageKey} for sheet ${sheet.id}: ${
+            (err as Error).message
+          }`,
+        );
+      }
+    }
     return { deleted, failed };
   }
 

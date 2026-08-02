@@ -28,16 +28,22 @@ function fakes(rows: Row[]) {
   };
   const prisma = {
     sheet: {
-      findMany: async ({ where, take }: any) => {
+      findMany: async ({ where, take, skip, orderBy }: any) => {
         const cutoff = where.receivedAt?.lt as Date | undefined;
-        return rows
-          .filter(
-            (r) =>
-              r.storageKey !== null &&
-              where.status.in.includes(r.status) &&
-              (cutoff === undefined || r.receivedAt < cutoff),
-          )
-          .slice(0, take)
+        const hit = rows.filter(
+          (r) =>
+            r.storageKey !== null &&
+            where.status.in.includes(r.status) &&
+            (cutoff === undefined || r.receivedAt < cutoff),
+        );
+        hit.sort((a, b) =>
+          orderBy?.receivedAt === 'desc'
+            ? b.receivedAt.getTime() - a.receivedAt.getTime()
+            : a.receivedAt.getTime() - b.receivedAt.getTime(),
+        );
+        const from = skip ?? 0;
+        return hit
+          .slice(from, from + take)
           .map((r) => ({ id: r.id, storageKey: r.storageKey }));
       },
       update: async ({ where, data }: any) => {
@@ -121,20 +127,42 @@ describe('retention: the sweep', () => {
     expect(removed).toEqual(['ko']);
   });
 
-  it('keeps failures longer than successes, because failures are the evidence', async () => {
+  it('keeps the newest N failures and drops the rest, by count not age', async () => {
     const rows: Row[] = [
       { id: 'ok', storageKey: 'kok', status: SheetStatus.extracted, receivedAt: NOW },
-      { id: 'bad', storageKey: 'kbad', status: SheetStatus.failed, receivedAt: daysAgo(2) },
-      { id: 'rej', storageKey: 'krej', status: SheetStatus.rejected, receivedAt: daysAgo(9) },
+      { id: 'f1', storageKey: 'k1', status: SheetStatus.failed, receivedAt: daysAgo(1) },
+      { id: 'f2', storageKey: 'k2', status: SheetStatus.rejected, receivedAt: daysAgo(2) },
+      { id: 'f3', storageKey: 'k3', status: SheetStatus.failed, receivedAt: daysAgo(3) },
+      { id: 'f4', storageKey: 'k4', status: SheetStatus.failed, receivedAt: daysAgo(4) },
     ];
     const { svc, removed } = build(rows, {
       SHEET_RETENTION_DAYS: '0',
-      SHEET_FAILED_RETENTION_DAYS: '7',
+      SHEET_FAILED_KEEP_MAX: '2',
     });
     await svc.sweep(NOW);
-    // The success goes immediately; the 2-day-old failure is still inside its
-    // window; the 9-day-old rejection has aged out.
-    expect(removed.sort()).toEqual(['kok', 'krej']);
+    // The success goes on completion. Of four failures the newest two keep
+    // their evidence; the older two lose it. Age never enters into it -- the
+    // one-day-old failure survives and the four-day-old does not because of
+    // where they sit in the order, which is what bounds the disk when a
+    // gateway outage fails every sheet for a day.
+    expect(removed.sort()).toEqual(['k3', 'k4', 'kok']);
+    expect(rows.find((r) => r.id === 'f1')!.storageKey).toBe('k1');
+    expect(rows.find((r) => r.id === 'f2')!.storageKey).toBe('k2');
+  });
+
+  it('a failure burst cannot exceed the cap however many arrive', async () => {
+    const rows: Row[] = Array.from({ length: 50 }, (_, i) => ({
+      id: `f${i}`,
+      storageKey: `k${i}`,
+      status: SheetStatus.failed,
+      receivedAt: daysAgo(i),
+    }));
+    const { svc } = build(rows, {
+      SHEET_RETENTION_DAYS: '0',
+      SHEET_FAILED_KEEP_MAX: '10',
+    });
+    await svc.sweep(NOW);
+    expect(rows.filter((r) => r.storageKey !== null)).toHaveLength(10);
   });
 
   it('never touches a sheet still in flight', async () => {
@@ -155,7 +183,7 @@ describe('retention: the sweep', () => {
     ];
     const { svc, removed } = build(rows, {
       SHEET_RETENTION_DAYS: '-1',
-      SHEET_FAILED_RETENTION_DAYS: '-1',
+      SHEET_FAILED_KEEP_MAX: '-1',
     });
     await svc.sweep(NOW);
     expect(removed).toEqual([]);

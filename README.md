@@ -91,8 +91,8 @@ storage stays flat at roughly the number of sheets in flight rather than growing
 forever.
 
 ```bash
-SHEET_RETENTION_DAYS=0          # 0 = on completion · N = keep N days · <0 = forever
-SHEET_FAILED_RETENTION_DAYS=7   # failures keep their evidence regardless
+SHEET_RETENTION_DAYS=0      # 0 = on completion · N = keep N days · <0 = forever
+SHEET_FAILED_KEEP_MAX=200   # newest N failures keep their image — a count, not an age
 RETENTION_SWEEP_MINUTES=60
 ```
 
@@ -102,10 +102,17 @@ BullMQ retries from the top and reads the image again. Deleting at the end of
 `extract()` would turn a transient database error into permanent loss of the
 sheet.
 
-Failed and rejected sheets keep their image for `SHEET_FAILED_RETENTION_DAYS`.
-They are the only ones anyone looks at — when a sheet comes back garbled you
-cannot tell a bad capture from a bad model without the image — and they are rare
-enough that the window is nearly free.
+It is also not delayed until the client finishes following. Follows operate on
+handles pulled from the database; the image is never consulted after extraction
+produced those rows, so waiting would hold 1.2 MB per sheet for hours and buy
+nothing.
+
+Failures are the one case with no event to trigger on — that is what failure
+means — so they are bounded by **count rather than age**: the newest
+`SHEET_FAILED_KEEP_MAX` keep their image and older ones lose it. That caps the
+disk at ~240 MB whatever the failure rate does. An age rule is unbounded in
+exactly the case that matters: a gateway outage failing every sheet for a day
+writes 20,000 images and then holds all of them for the full window.
 
 The hourly sweep is the safety net, not the mechanism: it catches sheets whose
 immediate delete was interrupted, and failures that have aged out. It never
