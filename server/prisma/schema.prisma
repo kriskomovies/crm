@@ -233,6 +233,9 @@ model Person {
 
   nationality      String?
   nationalityConf  String?
+  /// The drawn avatar's face colour, from the closed skin-tone vocabulary
+  /// (see normalize.ts SKIN_TONES). Null when the model gave no usable answer.
+  skinTone         String?
   avatarCues       String?
 
   firstSeenSheetId String?
@@ -304,6 +307,8 @@ model FilterRule {
   presentsAs String[]
   /// Empty = any. Lowercased adjectives: ["italian","turkish"].
   countries  String[]
+  /// Empty = any. Values from the closed skin-tone set: ["light","light-tan"].
+  skinTones  String[]
   minConfidence String @default("medium")
   /// forward | review | reject
   action    String   @default("forward")

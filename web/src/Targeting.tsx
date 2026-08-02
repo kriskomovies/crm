@@ -98,6 +98,26 @@ export function Targeting() {
           does not. Selecting nothing here forwards <b>every</b> origin.
         </p>
 
+        <h3>Skin tone</h3>
+        <div className="chips">
+          {options.skinTones.map((t) => (
+            <label key={t} className={rule.skinTones.includes(t) ? 'chip on' : 'chip'}>
+              <input
+                type="checkbox"
+                checked={rule.skinTones.includes(t)}
+                onChange={() => setRule({ ...rule, skinTones: toggle(rule.skinTones, t) })}
+              />
+              {t}
+            </label>
+          ))}
+        </div>
+        <p className="muted small">
+          The face colour of the drawn avatar, not a claim about a person — a
+          Bitmoji tone is a setting the account chose. Selecting nothing forwards
+          <b> every</b> tone. Naming tones also drops anyone whose avatar had no
+          readable face (<i>placeholder</i>, <i>stylised</i>, <i>unreadable</i>).
+        </p>
+
         <h3>Minimum confidence</h3>
         <div className="chips">
           {options.confidences.map((c) => (

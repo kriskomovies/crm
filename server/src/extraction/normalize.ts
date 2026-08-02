@@ -97,6 +97,65 @@ export function normCountry(raw: string | null | undefined): string | null {
   return v.slice(0, 40);
 }
 
+/**
+ * The closed skin-tone vocabulary. The first seven form an ordinal scale from
+ * pale to dark-brown; the last three are off-scale -- `placeholder` for a
+ * faceless silhouette, `stylised` for a flat unnatural colour, and `unreadable`
+ * for anything the model could not judge. Ported from vlm_eval/score.py, which
+ * is the harness that measured these values against apimart's replies.
+ */
+export const SKIN_TONES = [
+  'pale',
+  'light',
+  'light-tan',
+  'medium-tan',
+  'tan',
+  'brown',
+  'dark-brown',
+  'placeholder',
+  'stylised',
+  'unreadable',
+] as const;
+
+export type SkinTone = (typeof SKIN_TONES)[number];
+
+/**
+ * The phrasings apimart reaches for that mean one of the canonical tones. Keys
+ * are already hyphenated (spaces folded to `-`) so a single lookup covers both
+ * "light skin" and "light-skin". Kept in step with vlm_eval/score.py SYNONYMS.
+ */
+const SKIN_ALIASES: Record<string, SkinTone> = {
+  'light-skin': 'light',
+  fair: 'light',
+  'light-blond': 'light',
+  'pale-skin': 'pale',
+  medium: 'medium-tan',
+  olive: 'light-tan',
+  'light-olive': 'light-tan',
+  'light-golden': 'light-tan',
+  tanned: 'tan',
+  silhouette: 'placeholder',
+  stylized: 'stylised',
+};
+
+/**
+ * Map a free-text tone answer onto the closed set. Returns null when the reply
+ * is empty or unrecognised -- we never fabricate a tone, and an empty rule
+ * treats a null tone as "any" anyway.
+ */
+export function normSkinTone(raw: string | null | undefined): SkinTone | null {
+  const v = (raw ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, '-')
+    .replace(/\.+$/, '');
+  if (!v) return null;
+  const mapped = SKIN_ALIASES[v] ?? v;
+  return (SKIN_TONES as readonly string[]).includes(mapped)
+    ? (mapped as SkinTone)
+    : null;
+}
+
 const CONF_RANK: Record<string, number> = { high: 3, medium: 2, low: 1 };
 
 export function confidenceAtLeast(

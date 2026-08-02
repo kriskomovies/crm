@@ -23,6 +23,7 @@ import {
   isPlausibleHandle,
   normCountry,
   normHandle,
+  normSkinTone,
   presentsToDb,
   signalsDisagree,
   toPresents,
@@ -246,6 +247,7 @@ export class PipelineService {
         namePresentsAs: presentsToDb(name) as any,
         nationality: normCountry(e.nationality),
         nationalityConf: (e.nationality_confidence ?? '').toLowerCase() || null,
+        skinTone: normSkinTone(e.skin_tone),
         avatarCues: e.cues ?? null,
       });
     }
@@ -390,6 +392,20 @@ export class PipelineService {
             p.nationality &&
             rule.countries.some(
               (c) => c.toLowerCase() === p.nationality!.toLowerCase(),
+            )
+          )
+        ) {
+          continue;
+        }
+        // Skin tone is a plain membership test, case-insensitive like country.
+        // Empty list = any, and a person with no read tone only matches the
+        // "any" rule -- naming tones excludes the ones the model could not read.
+        if (
+          rule.skinTones.length &&
+          !(
+            p.skinTone &&
+            rule.skinTones.some(
+              (t) => t.toLowerCase() === p.skinTone!.toLowerCase(),
             )
           )
         ) {

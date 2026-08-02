@@ -249,6 +249,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
 export interface Rule {
   presentsAs: string[];
   countries: string[];
+  skinTones: string[];
   minConfidence: string;
   action?: string;
   enabled?: boolean;
@@ -258,6 +259,7 @@ export interface RuleOptions {
   origins: string[];
   presentsAs: string[];
   confidences: string[];
+  skinTones: string[];
 }
 
 export interface Session {

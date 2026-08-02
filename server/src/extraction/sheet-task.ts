@@ -31,7 +31,7 @@ ${READ_ORDER_NOTE} Number them 1 to ${n} in that order.
 Each entry is a round cartoon avatar, a display name in black, and a grey username handle directly under the name.
 
 Return ONLY a JSON object, no prose and no markdown fence:
-{"entries": [{"n": 1, "display_name": "...", "handle": "...", "nationality": "...", "nationality_confidence": "...", "avatar_presents_as": "...", "name_presents_as": "..."}, ...]}
+{"entries": [{"n": 1, "display_name": "...", "handle": "...", "nationality": "...", "nationality_confidence": "...", "avatar_presents_as": "...", "name_presents_as": "...", "skin_tone": "..."}, ...]}
 
 Emit exactly ${n} entries, numbered 1 to ${n}, none skipped.
 
@@ -43,6 +43,7 @@ Rules:
 - avatar_presents_as: judge ONLY the drawn cartoon, ignoring the name completely. One of "man", "woman", "ambiguous", "not-a-person". Read eyelashes, lip colour and eyebrow shape FIRST; hair length is unreliable in this art style. "not-a-person" if the avatar is not a human figure or is a blank silhouette. A feminine cartoon is "woman" even when the name reads male.
 - name_presents_as: judge ONLY the display name, ignoring the cartoon completely. One of "man", "woman", "ambiguous". Use "ambiguous" for unisex names, initials and nicknames -- it is correct far more often than either alternative.
 These two MUST be judged independently. Do not reconcile them; if the cartoon and the name disagree, report the disagreement.
+- skin_tone: the face colour of the drawn cartoon, one of "pale", "light", "light-tan", "medium-tan", "tan", "brown", "dark-brown". Judge the face only -- do NOT let hair, hat or shirt colour sway it. Almost every avatar is a normal drawn face, so pick one of those seven. Two special answers exist and both are rare: "placeholder" ONLY if there is no face at all, just a flat single-colour person-shaped silhouette; "stylised" ONLY if the whole avatar is one flat unnatural colour. Use "unreadable" only when the avatar is not a person or the face genuinely cannot be seen. This describes a drawing the account chose, not a claim about a person.
 - If you genuinely cannot read a name or handle, use "" rather than inventing one.`;
 }
 
@@ -89,6 +90,7 @@ export interface RawEntry {
   avatar_presents_as?: string;
   name_presents_as?: string;
   presents_as?: string;
+  skin_tone?: string;
   cues?: string;
 }
 

@@ -17,6 +17,7 @@ import { Body, Controller, Get, Put, Req, UseGuards } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 
 import { ApiKeyGuard } from '../auth/api-key.guard';
+import { SKIN_TONES } from '../extraction/normalize';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** What the model is now asked to answer with, and therefore what can be filtered. */
@@ -42,10 +43,20 @@ export const ORIGINS = [
 export const PRESENTS = ['man', 'woman', 'ambiguous'] as const;
 export const CONFIDENCES = ['low', 'medium', 'high'] as const;
 
+/**
+ * The avatar's face colour. Re-exported from the extractor's vocabulary so the
+ * checkboxes can never offer a tone the extractor does not actually return --
+ * the same guarantee ORIGINS gives for name origin.
+ */
+export const SKIN_TONE_OPTIONS = SKIN_TONES;
+
 /** Men, English-speaking, low bar. See the note on `low` below. */
 export const DEFAULT_RULE = {
   presentsAs: ['man'],
   countries: ['English'],
+  // Empty = any tone. Skin tone is off by default: it is a targeting knob a
+  // client opts into, not a filter that should quietly narrow the queue.
+  skinTones: [] as string[],
   /**
    * `low`, deliberately. Measured on the golden sheet: 80 of 99 entries come
    * back low confidence, because a first name really is weak evidence and the
@@ -71,11 +82,17 @@ export class RulesController {
     return {
       // The vocabulary travels with the value so the UI never hardcodes a list
       // that can drift out of step with what the extractor actually returns.
-      options: { origins: ORIGINS, presentsAs: PRESENTS, confidences: CONFIDENCES },
+      options: {
+        origins: ORIGINS,
+        presentsAs: PRESENTS,
+        confidences: CONFIDENCES,
+        skinTones: SKIN_TONE_OPTIONS,
+      },
       rule: rule
         ? {
             presentsAs: rule.presentsAs,
             countries: rule.countries,
+            skinTones: rule.skinTones,
             minConfidence: rule.minConfidence,
             action: rule.action,
             enabled: rule.enabled,
@@ -91,6 +108,7 @@ export class RulesController {
     body: {
       presentsAs?: string[];
       countries?: string[];
+      skinTones?: string[];
       minConfidence?: string;
       enabled?: boolean;
     },
@@ -101,6 +119,9 @@ export class RulesController {
     const countries = (body.countries ?? []).filter((c) =>
       (ORIGINS as readonly string[]).includes(c),
     );
+    const skinTones = (body.skinTones ?? []).filter((t) =>
+      (SKIN_TONE_OPTIONS as readonly string[]).includes(t),
+    );
     const minConfidence = (CONFIDENCES as readonly string[]).includes(
       body.minConfidence ?? '',
     )
@@ -109,12 +130,13 @@ export class RulesController {
 
     const rule = await this.prisma.filterRule.upsert({
       where: { clientId_position: { clientId: req.client.id, position: 1 } },
-      update: { presentsAs, countries, minConfidence, enabled: body.enabled ?? true },
+      update: { presentsAs, countries, skinTones, minConfidence, enabled: body.enabled ?? true },
       create: {
         clientId: req.client.id,
         position: 1,
         presentsAs,
         countries,
+        skinTones,
         minConfidence,
         action: 'forward',
         enabled: body.enabled ?? true,
@@ -126,6 +148,7 @@ export class RulesController {
       rule: {
         presentsAs: rule.presentsAs,
         countries: rule.countries,
+        skinTones: rule.skinTones,
         minConfidence: rule.minConfidence,
         action: rule.action,
         enabled: rule.enabled,

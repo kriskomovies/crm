@@ -129,7 +129,12 @@ export const ROUTES: RouteSpec[] = [
     method: 'PUT',
     path: '/api/rules',
     sample: '/api/rules',
-    body: { presentsAs: ['man'], countries: ['English'], minConfidence: 'low' },
+    body: {
+      presentsAs: ['man'],
+      countries: ['English'],
+      skinTones: ['light', 'light-tan'],
+      minConfidence: 'low',
+    },
   },
 
   // EnrolmentController -- the operator's side of machine enrolment
