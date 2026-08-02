@@ -90,7 +90,13 @@ services:
       # synchronously when a personality is deleted -- that path is
       # request-driven and must run wherever the request lands.
       RETENTION_SWEEP: 'off'
-    command: ['node', 'dist/main.js']
+    # Migrations run HERE, not in the Dockerfile. The image's CMD does
+    # `prisma migrate deploy && node dist/main.js`, but a `command:` in compose
+    # REPLACES the CMD outright -- so the migrate silently never ran, the API
+    # started against an empty database, and every request died on "the table
+    # public.clients does not exist". A deployment that starts successfully and
+    # serves nothing but errors is the worst shape this can fail in.
+    command: ['sh', '-c', 'npx prisma migrate deploy && node dist/main.js']
     # Deliberately NOT published. Caddy reaches it on the compose network and is
     # the only ingress; publishing 3000 would put an unencrypted API alongside
     # the TLS one, and every agent's key would travel in clear on whichever it
