@@ -378,7 +378,21 @@ export class PipelineService {
       for (const rule of rules) {
         const presents = fromDb(p.presentsAs);
         if (rule.presentsAs.length && !rule.presentsAs.includes(presents)) continue;
-        if (rule.countries.length && !(p.nationality && rule.countries.includes(p.nationality))) {
+        // Case-insensitive, and it has to be. The model answers "Italian" while
+        // a rule is typed "italian", and an exact includes() silently matched
+        // NOTHING -- a filter that forwards nobody looks identical to a filter
+        // nobody has triggered yet, so it can run for days before anyone asks
+        // why the queue is empty. Measured on the 99-profile golden sheet: 17
+        // men matched with case folding, 0 without.
+        if (
+          rule.countries.length &&
+          !(
+            p.nationality &&
+            rule.countries.some(
+              (c) => c.toLowerCase() === p.nationality!.toLowerCase(),
+            )
+          )
+        ) {
           continue;
         }
         if (!confidenceAtLeast(p.nationalityConf, rule.minConfidence)) {
