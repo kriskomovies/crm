@@ -83,6 +83,16 @@ services:
       SHEET_RETENTION_DAYS: ${SHEET_RETENTION_DAYS:-0}
       SHEET_FAILED_KEEP_MAX: ${SHEET_FAILED_KEEP_MAX:-20}
       RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-60}
+      # The operator login lives here now, not on Caddy. Without these the API
+      # compares every password against an empty hash and rejects everyone,
+      # while the UI and the login form both look completely healthy.
+      UI_USER: ${UI_USER:?set UI_USER}
+      UI_PASSWORD_HASH: ${UI_PASSWORD_HASH:?set UI_PASSWORD_HASH}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET}
+      SESSION_HOURS: ${SESSION_HOURS:-12}
+      # The session resolves to the client owning this key, so the API needs it
+      # to know which tenant a signed-in browser is.
+      OPERATOR_API_KEY: ${OPERATOR_API_KEY:?set OPERATOR_API_KEY}
       NODE_ENV: production
       # Only the worker sweeps. Both services import CoreModule, so leaving the
       # sweep on here too would have two processes selecting the same rows and
@@ -123,8 +133,9 @@ services:
     command: ['node', 'dist/worker.js']
 
   # Caddy serves the built UI, terminates TLS, and is the only thing published.
-  # It also injects the operator API key into /api/* -- the browser must never
-  # hold that key, since it grants a client's entire book of business.
+  # It no longer authenticates anything: the app has a real login and the API
+  # checks the session cookie, so the credentials moved to the api service where
+  # they are actually used. Caddy needs only the address it listens on.
   web:
     build:
       context: ./web
@@ -132,10 +143,6 @@ services:
     depends_on: [api]
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:?set SITE_ADDRESS, e.g. targets.example.com}
-      SNAP_API_KEY: ${OPERATOR_API_KEY:?set OPERATOR_API_KEY}
-      UI_USER: ${UI_USER:?set UI_USER}
-      # caddy hash-password --plaintext '...'
-      UI_PASSWORD_HASH: ${UI_PASSWORD_HASH:?set UI_PASSWORD_HASH}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
