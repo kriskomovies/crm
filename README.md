@@ -92,7 +92,7 @@ forever.
 
 ```bash
 SHEET_RETENTION_DAYS=0      # 0 = on completion · N = keep N days · <0 = forever
-SHEET_FAILED_KEEP_MAX=200   # newest N failures keep their image — a count, not an age
+SHEET_FAILED_KEEP_MAX=20    # newest N failures keep their image — a count, not an age
 RETENTION_SWEEP_MINUTES=60
 ```
 
@@ -109,10 +109,19 @@ nothing.
 
 Failures are the one case with no event to trigger on — that is what failure
 means — so they are bounded by **count rather than age**: the newest
-`SHEET_FAILED_KEEP_MAX` keep their image and older ones lose it. That caps the
-disk at ~240 MB whatever the failure rate does. An age rule is unbounded in
-exactly the case that matters: a gateway outage failing every sheet for a day
-writes 20,000 images and then holds all of them for the full window.
+`SHEET_FAILED_KEEP_MAX` keep their image and older ones lose it. An age rule is
+unbounded in exactly the case that matters: a gateway outage failing every sheet
+for a day writes 20,000 images and then holds all of them for the full window.
+
+20 is a diagnostic sample, not an archive — ~24 MB. Failures arrive correlated:
+at the design target an ordinary 1% rate is already 200 a day, and an outage
+fails every sheet the same way, so the 200th image tells you nothing the 3rd
+did not.
+
+Known limit: that cap is **global, not per client**, so one tenant failing in a
+burst can evict another tenant's evidence before anyone looks at it. Fixing it
+means `ROW_NUMBER() OVER (PARTITION BY clientId)` in raw SQL, since a sheet
+reaches a client only through account → personality.
 
 The hourly sweep is the safety net, not the mechanism: it catches sheets whose
 immediate delete was interrupted, and failures that have aged out. It never

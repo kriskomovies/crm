@@ -13,7 +13,7 @@
  *   N   keep N days, then sweep
  *   <0  keep forever
  *
- * SHEET_FAILED_KEEP_MAX (default 200)
+ * SHEET_FAILED_KEEP_MAX (default 20)
  *   Failed and rejected sheets are the only ones anyone ever looks at: when a
  *   sheet comes back garbled you cannot tell a bad capture from a bad model
  *   without the image. But failure has no completion event -- that is what
@@ -22,9 +22,20 @@
  *   A COUNT, not an age. The thing being protected is the disk, so bound the
  *   disk: the newest N failures keep their image and everything older loses it,
  *   which costs at most N x ~1.2 MB no matter what the failure rate does. An
- *   age bound is unbounded in exactly the case that matters -- a gateway
- *   outage failing every sheet for a day writes 20,000 images that an age rule
- *   then holds for its whole window.
+ *   age bound is unbounded in exactly the case that matters -- a gateway outage
+ *   failing every sheet for a day writes 20,000 images that an age rule then
+ *   holds for its whole window.
+ *
+ *   20 rather than a bigger number because failures arrive CORRELATED. At the
+ *   20,000/day target an ordinary 1% failure rate is 200 a day, and an outage
+ *   makes every sheet fail at once -- but they all fail the same way, so the
+ *   two hundredth image tells you nothing the third did not. This is a
+ *   diagnostic sample, not an archive.
+ *
+ *   KNOWN LIMIT: the cap is global, not per client. One tenant failing in a
+ *   burst can evict another tenant's evidence before anyone looks at it. Fixing
+ *   that means ROW_NUMBER() OVER (PARTITION BY clientId) in raw SQL, since
+ *   sheets reach a client only through account -> personality.
  *
  * WHY NOT DELETE THE INSTANT EXTRACTION RETURNS: run() continues into resolve,
  * filter and allocate. A throw in any of them fails the job, BullMQ retries it,
@@ -64,7 +75,7 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   private running = false;
 
   private readonly days = Number(process.env.SHEET_RETENTION_DAYS ?? 0);
-  private readonly failedKeepMax = Number(process.env.SHEET_FAILED_KEEP_MAX ?? 200);
+  private readonly failedKeepMax = Number(process.env.SHEET_FAILED_KEEP_MAX ?? 20);
   private readonly everyMs =
     Number(process.env.RETENTION_SWEEP_MINUTES ?? 60) * 60_000;
 
