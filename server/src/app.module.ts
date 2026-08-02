@@ -3,6 +3,8 @@ import { Global, Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
 import { ApiKeyGuard } from './auth/api-key.guard';
+import { SessionController } from './auth/session.controller';
+import { SessionService } from './auth/session.service';
 import { CrmController } from './crm/crm.controller';
 import {
   EnrolmentController,
@@ -56,6 +58,7 @@ import { TargetsService } from './targets/targets.service';
     StatsService,
     RetentionService,
     EnrolmentService,
+    SessionService,
     ApiKeyGuard,
   ],
   exports: [
@@ -69,6 +72,7 @@ import { TargetsService } from './targets/targets.service';
     StatsService,
     RetentionService,
     EnrolmentService,
+    SessionService,
   ],
 })
 export class CoreModule {}
@@ -84,6 +88,7 @@ export class CoreModule {}
     CrmController,
     MachineEnrolmentController,
     EnrolmentController,
+    SessionController,
   ],
 })
 export class AppModule {}

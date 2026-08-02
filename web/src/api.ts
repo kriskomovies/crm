@@ -246,7 +246,23 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (body ? JSON.parse(body) : undefined) as T;
 }
 
+export interface Session {
+  authenticated: boolean;
+  client?: { id: string; name: string };
+}
+
 export const api = {
+  /** Who the cookie says we are. Drives whether the login screen shows. */
+  session: () => req<Session>('/api/session'),
+
+  login: (username: string, password: string) =>
+    req<Session>('/api/session', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    }),
+
+  logout: () => req<Session>('/api/session', { method: 'DELETE' }),
+
   // Asks for a page and keeps only the items: this drives the 5s overview poll
   // and the personality filter, neither of which can page. 500 is the contract
   // ceiling and no client is anywhere near it.

@@ -14,6 +14,7 @@ import {
 import { createHash } from 'node:crypto';
 
 import { PrismaService } from '../prisma/prisma.service';
+import { COOKIE, readCookie, SessionService } from './session.service';
 
 export function hashApiKey(key: string): string {
   return createHash('sha256').update(key.trim()).digest('hex');
@@ -21,13 +22,31 @@ export function hashApiKey(key: string): string {
 
 @Injectable()
 export class ApiKeyGuard implements CanActivate {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly session: SessionService,
+  ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
     const header: string = req.headers['authorization'] ?? '';
     const key = header.startsWith('Bearer ') ? header.slice(7) : req.headers['x-api-key'];
-    if (!key) throw new UnauthorizedException('missing API key');
+
+    if (!key) {
+      // No key: this may be the operator's browser carrying a session cookie.
+      // The browser never gets an API key -- the key grants a client's whole
+      // book of business -- so the cookie is how it identifies itself, and it
+      // resolves to exactly the same client the key would have.
+      const clientId = this.session.open(readCookie(req.headers.cookie, COOKIE));
+      if (clientId) {
+        const viaCookie = await this.prisma.client.findUnique({ where: { id: clientId } });
+        if (viaCookie) {
+          req.client = viaCookie;
+          return true;
+        }
+      }
+      throw new UnauthorizedException('not signed in');
+    }
 
     const hash = hashApiKey(String(key));
 

@@ -21,19 +21,21 @@
 		reverse_proxy api:3000
 	}
 
+	# The operator UI. No basic_auth and no key injection any more: the app has
+	# a real login form, and POST /api/session sets an HttpOnly signed cookie
+	# that the API resolves to the same client the injected key stood for.
+	#
+	# The prompt this replaces could not be styled, could not say what was
+	# wrong, and could not be logged out of without closing the browser. More
+	# importantly, injecting the key here meant Caddy's basic_auth was the ONLY
+	# thing standing in front of a credential that grants a client's entire book
+	# of business -- lose that one line and every /api route was wide open.
+	# Authorisation now lives in the API, next to the data it protects.
 	handle /api/* {
-		basic_auth {
-			{$UI_USER} {$UI_PASSWORD_HASH}
-		}
-		reverse_proxy api:3000 {
-			header_up Authorization "Bearer {$SNAP_API_KEY}"
-		}
+		reverse_proxy api:3000
 	}
 
 	handle {
-		basic_auth {
-			{$UI_USER} {$UI_PASSWORD_HASH}
-		}
 		root * /srv
 		try_files {path} /index.html
 		file_server

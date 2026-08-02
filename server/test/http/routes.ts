@@ -151,6 +151,19 @@ export const ROUTES: RouteSpec[] = [
  * matrix cannot: see enrolment.http.spec.ts.
  */
 export const UNGUARDED: RouteSpec[] = [
+  // The operator login. Unguarded of necessity -- it is how a browser with no
+  // session gets one -- and constrained instead by accepting only the single
+  // configured credential. GET and DELETE are here for the same reason: asking
+  // "am I signed in" and "sign me out" both have to work without being signed
+  // in, and neither reveals anything a caller did not already send.
+  { method: 'GET', path: '/api/session', sample: '/api/session' },
+  {
+    method: 'POST',
+    path: '/api/session',
+    sample: '/api/session',
+    body: { username: 'nobody', password: 'wrong' },
+  },
+  { method: 'DELETE', path: '/api/session', sample: '/api/session' },
   {
     // How a machine with no credential gets one. Constrained instead by the
     // operator's enrolment window: closed by default, expires on its own, and

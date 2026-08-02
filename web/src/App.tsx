@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api, type Personality } from './api';
+import { Login } from './Login';
 import { Personalities } from './Personalities';
 import { Sheets } from './Sheets';
 import { Stats } from './Stats';
@@ -12,6 +13,9 @@ type View =
   | { tab: 'sheets' };
 
 export default function App() {
+  // null = not asked yet. Rendering the app or the login before the answer
+  // arrives makes a logged-in operator watch the login flash past on reload.
+  const [authed, setAuthed] = useState<boolean | null>(null);
   const [view, setView] = useState<View>({ tab: 'personalities', open: null });
   const [data, setData] = useState<Personality[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -37,11 +41,22 @@ export default function App() {
 
   // The overview is small and fixed-cost on the server, so polling it is cheap.
   // The target list is not polled -- see Targets.tsx.
+  // Ask once on mount. A failure here means the API is unreachable, which is
+  // not the same as being signed out -- but showing the login is the only
+  // useful thing to offer either way.
   useEffect(() => {
+    void api
+      .session()
+      .then((s) => setAuthed(s.authenticated))
+      .catch(() => setAuthed(false));
+  }, []);
+
+  useEffect(() => {
+    if (!authed) return;
     void load();
     const t = setInterval(() => void load(), 5000);
     return () => clearInterval(t);
-  }, [load]);
+  }, [load, authed]);
 
   // Re-resolve the open personality from fresh data so its counts stay live
   // while drilled in, rather than freezing at whatever they were on entry. If
@@ -53,6 +68,11 @@ export default function App() {
         ? (data.find((p) => p.id === view.open!.id) ?? null)
         : view.open
       : null;
+
+  // Nothing at all until the session answer lands. Rendering either half early
+  // makes a signed-in operator watch the login flash past on every reload.
+  if (authed === null) return null;
+  if (!authed) return <Login onIn={() => setAuthed(true)} />;
 
   return (
     <div className="app">

@@ -386,3 +386,70 @@ tr.off { opacity: 0.5; }
   min-width: 48px;
   text-align: right;
 }
+
+/* ---- operator sign in -----------------------------------------------------
+   Replaces the browser's basic-auth prompt. Centred with grid rather than
+   flex + margin so it stays put when the error line appears and disappears --
+   a form that jumps as you type reads as broken. */
+
+.login-wrap {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.login {
+  width: 100%;
+  max-width: 22rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+}
+
+.login h1 { margin: 0; font-size: 1.15rem; letter-spacing: -0.01em; }
+.login p  { margin: 0 0 0.35rem; font-size: 0.85rem; }
+
+.login label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.login input {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  padding: 0.6rem 0.7rem;
+  font: inherit;
+}
+.login input:focus { outline: none; border-color: var(--accent); }
+
+.login button {
+  margin-top: 0.35rem;
+  background: #1d3a6b;
+  border: 1px solid #2b5498;
+  color: #dce9ff;
+  border-radius: 8px;
+  padding: 0.6rem 1rem;
+  font: inherit;
+  cursor: pointer;
+}
+.login button:hover:not(:disabled) { filter: brightness(1.15); }
+.login button:disabled { opacity: 0.55; cursor: default; }
+
+.login-err {
+  background: #2a1618;
+  border: 1px solid #4a2327;
+  border-radius: 8px;
+  padding: 0.55rem 0.7rem;
+  color: #ff9a9e;
+  font-size: 0.85rem;
+}

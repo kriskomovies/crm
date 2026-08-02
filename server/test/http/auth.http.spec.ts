@@ -63,7 +63,10 @@ describe.each(ROUTES)('$method $path', (route) => {
     expect(res.status).toBe(401);
     // The body has to say which of the two failures it was: "missing" and
     // "invalid" send an integrator to completely different places.
-    expect(res.body).toMatchObject({ statusCode: 401, message: 'missing API key' });
+    // 'not signed in', not 'missing API key': a browser authenticates with a
+    // session cookie and never has a key, so naming the key would be wrong for
+    // half the callers this rejects.
+    expect(res.body).toMatchObject({ statusCode: 401, message: 'not signed in' });
   });
 
   it.each([
@@ -118,7 +121,7 @@ describe('undocumented edges of the guard', () => {
     // through to the x-api-key branch and the caller is told their key is
     // missing -- with a valid key in the request.
     expect(res.status).toBe(401);
-    expect(res.body).toMatchObject({ message: 'missing API key' });
+    expect(res.body).toMatchObject({ message: 'not signed in' });
   });
 
   it('tolerates surrounding whitespace in the key itself', async () => {
