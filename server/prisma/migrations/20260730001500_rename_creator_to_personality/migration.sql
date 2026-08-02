@@ -24,6 +24,9 @@ ALTER TABLE "people" RENAME CONSTRAINT "people_creatorId_fkey" TO "people_person
 -- personalities following the same handle is legal and expected.
 ALTER INDEX "people_creatorId_handle_key" RENAME TO "people_personalityId_handle_key";
 ALTER INDEX "people_creatorId_presentsAs_nationality_idx" RENAME TO "people_personalityId_presentsAs_nationality_idx";
+-- From 20260729230229_stats_indexes, which runs before this one. Missing it
+-- left permanent drift that `migrate dev` offers to "fix" by resetting.
+ALTER INDEX "people_creatorId_createdAt_idx" RENAME TO "people_personalityId_createdAt_idx";
 
 -- CreateEnum
 CREATE TYPE "PersonSource" AS ENUM ('extraction', 'manual');
