@@ -49,10 +49,46 @@ model Client {
   /// in a day, so this is enforced from day one, not "later".
   monthlyBudgetUsd Decimal @default(100) @db.Decimal(10, 2)
 
+  /// While this is in the future, an unauthenticated machine may POST /v1/enrol
+  /// and be issued its own key. It is how a box is set up by typing only an
+  /// address: the operator opens a short window in the CRM instead of copying a
+  /// secret onto twenty machines by hand.
+  ///
+  /// A window, not a flag, because the failure mode of "enrolment left on" is
+  /// that anyone who finds the domain can mint a key. It expires on its own.
+  enrolOpenUntil DateTime?
+
   personalities Personality[]
   filterRules   FilterRule[]
+  apiKeys       ApiKey[]
 
   @@map("clients")
+}
+
+/// One credential. Many per client, so a machine can hold its own.
+///
+/// Client.apiKeyHash is the original single key and still works -- it is the
+/// operator's, used by the CRM UI. This table is what enrolment writes to, so a
+/// machine that is lost or rebuilt can be revoked on its own without changing
+/// the key every other machine is using.
+model ApiKey {
+  id        String   @id @default(uuid())
+  clientId  String
+  /// What enrolled, for the operator to recognise it by: a hostname.
+  name      String
+  /// SHA-256, never the key. A database dump must not hand anyone the ability
+  /// to drain a target queue.
+  hash      String   @unique
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime?
+  /// Set rather than deleted, so a revoked machine still explains itself in the
+  /// audit trail instead of vanishing.
+  revokedAt DateTime?
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([clientId])
+  @@map("api_keys")
 }
 
 /// A "model" in the business sense -- kris. THE DEDUPE SCOPE.

@@ -122,9 +122,47 @@ export const ROUTES: RouteSpec[] = [
     path: '/api/sheets/:id/image',
     sample: `/api/sheets/${ABSENT}/image`,
   },
+
+  // EnrolmentController -- the operator's side of machine enrolment
+  { method: 'GET', path: '/api/enrolment', sample: '/api/enrolment' },
+  {
+    method: 'POST',
+    path: '/api/enrolment/open',
+    sample: '/api/enrolment/open',
+    body: { minutes: 10 },
+  },
+  { method: 'POST', path: '/api/enrolment/close', sample: '/api/enrolment/close' },
+  {
+    method: 'DELETE',
+    path: '/api/enrolment/machines/:id',
+    sample: `/api/enrolment/machines/${ABSENT}`,
+  },
+];
+
+/**
+ * Routes that are UNAUTHENTICATED on purpose.
+ *
+ * Listed rather than omitted. Leaving one out of ROUTES would also satisfy the
+ * drift test -- silently, and with no record that anyone decided it -- which is
+ * exactly the state /api/* was in when it was serving every tenant's ledger to
+ * anyone who asked. An entry here is a claim someone has to justify in review.
+ *
+ * Each one needs its own test proving the thing that limits it, since the auth
+ * matrix cannot: see enrolment.http.spec.ts.
+ */
+export const UNGUARDED: RouteSpec[] = [
+  {
+    // How a machine with no credential gets one. Constrained instead by the
+    // operator's enrolment window: closed by default, expires on its own, and
+    // refuses outright when more than one client has it open.
+    method: 'POST',
+    path: '/v1/enrol',
+    sample: '/v1/enrol',
+    body: { name: 'auth-matrix' },
+  },
 ];
 
 /** "METHOD /path" for every declared route, in the shape Harness.routes() returns. */
 export function declaredRoutes(): string[] {
-  return ROUTES.map((r) => `${r.method} ${r.path}`).sort();
+  return [...ROUTES, ...UNGUARDED].map((r) => `${r.method} ${r.path}`).sort();
 }

@@ -4,6 +4,11 @@ import { ConfigModule } from '@nestjs/config';
 
 import { ApiKeyGuard } from './auth/api-key.guard';
 import { CrmController } from './crm/crm.controller';
+import {
+  EnrolmentController,
+  MachineEnrolmentController,
+} from './enrolment/enrolment.controller';
+import { EnrolmentService } from './enrolment/enrolment.service';
 import { ExtractDispatcher } from './pipeline/extract.dispatcher';
 import { GatewayClient } from './extraction/gateway.client';
 import { AccountsController, PersonalitiesController } from './personalities/personalities.controller';
@@ -50,6 +55,7 @@ import { TargetsService } from './targets/targets.service';
     PersonalitiesService,
     StatsService,
     RetentionService,
+    EnrolmentService,
     ApiKeyGuard,
   ],
   exports: [
@@ -62,6 +68,7 @@ import { TargetsService } from './targets/targets.service';
     PersonalitiesService,
     StatsService,
     RetentionService,
+    EnrolmentService,
   ],
 })
 export class CoreModule {}
@@ -75,6 +82,8 @@ export class CoreModule {}
     PersonalitiesController, AccountsController,
     StatsController,
     CrmController,
+    MachineEnrolmentController,
+    EnrolmentController,
   ],
 })
 export class AppModule {}
