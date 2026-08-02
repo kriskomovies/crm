@@ -62,7 +62,7 @@ machine.
 cd server && npx vitest run
 ```
 
-312 across four projects — 303 on a fresh clone, since the nine sheet-driven
+377 across four projects — 368 on a fresh clone, since the nine sheet-driven
 e2e tests skip until you supply the fixture above. `unit` (pure functions),
 `int` (real Postgres —
 per-personality scoping and the concurrent metered claim), `http` (auth, tenant
@@ -78,6 +78,47 @@ docker compose up -d --build
 
 DNS must already point at the box or Caddy cannot issue a certificate. Only
 80/443 are published; Postgres and MinIO bind loopback.
+
+## Forward or drop — there is no review
+
+A person is either sent to an account or dropped. Nothing is held for a human,
+there is no review queue and no review screen, and `AssignmentState` has no
+value for "someone should look at this". An assignment row means forwarded; the
+absence of one means dropped.
+
+Four things used to produce a review item, and all four now drop:
+
+| | |
+|---|---|
+| avatar and name disagree | the guard that keeps a woman with a male-reading display name out of a men-only feed |
+| country confidence below the rule's `minConfidence` | the rule matched, but not on evidence strong enough to be worth acting on |
+| a near duplicate | the handle is one character from one already in the ledger, under the same display name |
+| `FilterRule.action = 'review'` | gone; the column is `forward` or `reject` |
+
+Dropping is not deleting. The `Person` row stays, so widening the rules later
+replays `filter` and `allocate` over stored people and can pick them up without
+another vision call — the same free rule change the pipeline is built around.
+
+**The near-duplicate case is the one that needed a schema change.** That verdict
+is computed in `resolve`, from the sheet, and it used to survive only because it
+was written as a `review` assignment row, where `UNIQUE (personId)` stopped a
+replay from queueing the twin. With no row, the verdict had nowhere to live, and
+the next country-list edit would queue both readings of one man and follow him
+twice — `UNIQUE (personId)` cannot catch that, because they are two distinct
+`Person` rows, which is exactly what the guard had noticed. So it is persisted:
+
+```prisma
+Person.nearDuplicateOf String?   -- the handle this one is one edit from
+```
+
+`filter` drops on that column, so the drop is reproducible from stored state
+rather than from what the pipeline happened to know at the time.
+
+The cost of all this is that **every drop is now silent**. A person who is not
+forwarded leaves no row, no reason string and no screen, so "the filter is
+working" and "the filter is eating everyone" look identical from the operator
+UI — the `/api/stats` country rollup, which counts people against people with
+assignments, is the only place the gap is visible.
 
 ## Retention — the setting that decides whether the disk fills
 

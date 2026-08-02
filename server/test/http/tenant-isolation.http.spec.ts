@@ -118,12 +118,6 @@ describe('reads scoped to the calling client', () => {
     for (const handle of b.handles) expect(res.text).not.toContain(handle);
   });
 
-  it('GET /api/personalities/:id/review 404s on another tenant`s personality', async () => {
-    const { a, b } = await twoTenants();
-    const res = await api.get(`/api/personalities/${b.personalityId}/review`, { auth: a.auth });
-    expect(res.status).toBe(404);
-  });
-
   it('GET /v1/personalities/:id/ledger 404s on another tenant`s personality', async () => {
     const { a, b } = await twoTenants();
 

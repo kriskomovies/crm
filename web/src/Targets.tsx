@@ -10,7 +10,7 @@ import {
 } from './api';
 import { Pill } from './ui';
 
-const STATES = ['', 'queued', 'handed_out', 'followed', 'review', 'failed', 'skipped'];
+const STATES = ['', 'queued', 'handed_out', 'followed', 'failed', 'skipped'];
 
 /**
  * The handles one personality holds.

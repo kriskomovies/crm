@@ -61,8 +61,8 @@ export class PersonalitiesService {
    *
    * Three queries in total, and it stays three however many personalities
    * exist. The obvious version -- loop the accounts, ask for each account's
-   * queued count, review count and today's handouts -- is three round trips per
-   * account: at 100 clients x 10 personalities x 10 accounts that is 30,000,
+   * queued count, followed count and today's handouts -- is three round trips
+   * per account: at 100 clients x 10 personalities x 10 accounts that is 30,000,
    * and the dashboard simply never loads. The counts are fetched as two
    * groupBys and stitched in memory instead.
    */
@@ -117,7 +117,6 @@ export class PersonalitiesService {
           queued: c.queued ?? 0,
           handedOut: c.handed_out ?? 0,
           followed: c.followed ?? 0,
-          review: c.review ?? 0,
         };
       }),
     }));
@@ -281,9 +280,9 @@ export class PersonalitiesService {
    *
    * Manual adds bypass the client's filter rules deliberately. The filter reads
    * avatar and country, and a typed-in handle has neither -- it would fall
-   * through to "confidence below medium" and land in review, so every manual
-   * add would need approving twice. Someone naming a handle has already made
-   * that decision.
+   * through to "confidence below medium" and be dropped, so every manual add
+   * would silently go nowhere. Someone naming a handle has already made the
+   * decision the filter exists to make.
    *
    * Spread across accounts by current queue depth rather than piling onto the
    * first one, because a single account can only ever hand out its dailyCap.
@@ -394,35 +393,6 @@ export class PersonalitiesService {
     };
   }
 
-  /** Everything held back from forwarding, and why. The screen that earns trust. */
-  async review(clientId: string, personalityId: string, limit: number, cursor?: string) {
-    await this.assertExists(clientId, personalityId);
-    const take = pageSize(limit);
-    const rows = await this.prisma.assignment.findMany({
-      where: { state: 'review', person: { personalityId } },
-      include: { person: true, account: { select: { label: true } } },
-      // createdAt is not unique; id makes the order total so a cursor page
-      // cannot repeat or skip the rows either side of the boundary.
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: take + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-    });
-
-    const { items, nextCursor } = slicePage(rows, take);
-    return {
-      items: items.map((r) => ({
-        handle: r.person.handle,
-        displayName: r.person.displayName,
-        avatarPresentsAs: r.person.avatarPresentsAs,
-        namePresentsAs: r.person.namePresentsAs,
-        nationality: r.person.nationality,
-        reason: r.reason,
-        account: r.account.label,
-      })),
-      nextCursor,
-    };
-  }
-
   /** 404 rather than 403 for someone else's personality: the id is the secret. */
   private async assertExists(clientId: string, personalityId: string): Promise<void> {
     const found = await this.prisma.personality.findFirst({
@@ -435,7 +405,7 @@ export class PersonalitiesService {
 
 /**
  * `?state=` reaches Prisma as an enum value. Cast unchecked it turned a typo
- * into a 500 from the query engine; the caller gets to know which of the six it
+ * into a 500 from the query engine; the caller gets to know which of the five it
  * should have sent.
  */
 function assignmentState(raw: string): AssignmentState {

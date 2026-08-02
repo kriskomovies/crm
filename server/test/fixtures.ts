@@ -178,31 +178,26 @@ export async function queueTargets(
 }
 
 /**
- * Review-state assignments that all share one createdAt.
+ * People who all share one createdAt.
  *
- * Not a shortcut -- it is the realistic case. `allocate` writes a whole sheet's
- * decisions in one batch, so every row in it gets the same DEFAULT now(), and
- * the review list orders by createdAt first. A cursor over a sort key that ties
- * across an entire page is precisely where a paginator repeats or skips rows.
+ * Not a shortcut -- it is the realistic case. `resolve` writes a whole sheet's
+ * people in one createMany, so all 99 get the same DEFAULT now(), and the
+ * ledger list orders by createdAt first. A cursor over a sort key that ties
+ * across an entire page is precisely where a paginator repeats or skips rows,
+ * and it is only the `id` tiebreak in that ORDER BY that stops it.
  */
-export async function queueReview(
+export async function addPeopleAtOneInstant(
   personalityId: string,
-  accountId: string,
   count: number,
-  prefix = 'held',
+  prefix = 'tied',
 ): Promise<string[]> {
-  const handles = await addPeople(personalityId, count, prefix);
-  const people = await prisma.person.findMany({
-    where: { personalityId, handle: { in: handles } },
-    select: { id: true },
-  });
+  const handles = Array.from({ length: count }, (_, i) => `${prefix}_${i}`);
   const sameInstant = new Date();
-  await prisma.assignment.createMany({
-    data: people.map((p) => ({
-      personId: p.id,
-      accountId,
-      state: 'review' as const,
-      reason: 'avatar reads woman, name reads man',
+  await prisma.person.createMany({
+    data: handles.map((handle, i) => ({
+      personalityId,
+      handle,
+      displayName: `Tied ${i}`,
       createdAt: sameInstant,
     })),
   });

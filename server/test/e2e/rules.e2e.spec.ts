@@ -1,6 +1,5 @@
 /**
- * What reaches the queue, what reaches the review screen, and what reaches
- * neither.
+ * What reaches the queue and what is dropped.
  *
  * The journey test uses a rule that forwards everything, which is the right
  * baseline and also the kindest possible configuration. This file runs the same
@@ -8,6 +7,10 @@
  * rules yet, or a narrow rule -- because the interesting failures here are
  * silent ones. Nothing throws, no sheet is marked failed, and the ledger fills
  * up correctly; it is the work that goes missing.
+ *
+ * Since there is no review state, every drop is silent by construction: the
+ * only trace is the absence of an assignment row. That makes the assertions
+ * here about ABSENCE the load-bearing ones.
  */
 import { afterEach, beforeEach, expect, it } from 'vitest';
 
@@ -48,7 +51,7 @@ describeSheet('a client with no filter rules', () => {
    * indistinguishable from a broken pipeline at the only place a client can see:
    * the sheet status says the extraction succeeded and found 99 new people, and
    * the handout then answers with an empty page and a full cap. Nothing is
-   * failed, nothing is held, and nothing says why.
+   * failed and nothing says why.
    *
    * `filter` loops over the rule list, and an empty list means the loop body
    * never runs, so no decision is produced and `allocate` is handed nothing.
@@ -66,12 +69,11 @@ describeSheet('a client with no filter rules', () => {
     expect(status.body).toMatchObject({ status: 'extracted', newPeople: 99, queued: 0 });
 
     expect(await prisma.person.count({ where: { personalityId: client.personality.id } })).toBe(99);
-    // Exactly one assignment, and it is not a forward: the avatar/name
-    // disagreement is held for review BEFORE any rule is consulted, so it is
-    // the only decision an unconfigured client produces.
-    const assignments = await prisma.assignment.findMany({ where: { accountId: account.id } });
-    expect(assignments).toHaveLength(1);
-    expect(assignments[0].state).toBe('review');
+    // No assignments at all. An unconfigured client produces no decisions: the
+    // avatar/name disagreement is dropped before any rule is consulted, and the
+    // other 98 fall through an empty rule list. Both outcomes look the same
+    // from here, which is the point of this test.
+    expect(await prisma.assignment.count({ where: { accountId: account.id } })).toBe(0);
 
     const claim = await api.get(`/v1/accounts/${account.id}/targets`);
     expect(claim.body.targets).toEqual([]);
@@ -125,35 +127,28 @@ describeSheet('the templated-output guard', () => {
 
 describeSheet('a near duplicate under a rule that does not match it', () => {
   /**
-   * FAILING, and it is a real bug rather than a strict test.
+   * The near-duplicate verdict has to outlive the run that computed it.
    *
-   * `resolve` finds the near duplicate correctly: claude-haiku reads entry 41 as
+   * `resolve` finds the duplicate: claude-haiku reads entry 41 as
    * `timetogotowatch` where the golden run reads `timetogotawatch`, both named
-   * "Matt", and the guard spots it. `run` then applies the verdict by walking
-   * the DECISIONS the filter produced and overriding any that belong to a
-   * flagged person -- so a person the filter produced no decision for is never
-   * visited, and the verdict is dropped on the floor.
+   * "Matt". But this client forwards men, which is the normal configuration,
+   * and claude-haiku's reply carries no avatar or name reading at all -- so all
+   * 43 of its new people combine to "ambiguous", match no rule, and get no
+   * decision. The twin is dropped for a reason that has nothing to do with
+   * being a twin.
    *
-   * That is easy to hit. This client forwards men, which is the normal
-   * configuration; claude-haiku's sheet reply carries no avatar or name reading
-   * at all, so all 43 of its new people combine to "ambiguous", match no rule,
-   * and get no decision. The twin is therefore stored, flagged, and then
-   * silently forgotten: no assignment row, absent from the queue, absent from
-   * the review screen, and no human is ever asked the question the guard exists
-   * to raise.
+   * That is the case where a verdict held only in memory disappears without
+   * anyone noticing, because the visible outcome -- no assignment row -- is
+   * identical either way. It stops being identical the moment the client widens
+   * its rules, which the pipeline documents as a free replay of `filter` and
+   * `allocate` over stored people. If the verdict did not survive, that replay
+   * queues both rows and one man is followed twice; UNIQUE (personId) cannot
+   * help, because they are two distinct Person rows, which is exactly what the
+   * guard had noticed.
    *
-   * Why it matters beyond the missing review item: the verdict is computed in
-   * `resolve` and never persisted -- Person has no near-duplicate column -- so
-   * nothing can recover it later. The moment this client widens its rules, which
-   * the pipeline documents as a free replay of `filter` and `allocate` over
-   * stored people, both rows are queued and the same man is followed twice. The
-   * unique constraint cannot help: they are two different people as far as the
-   * database is concerned, which is exactly what the guard had noticed.
-   *
-   * The pipeline's own comment states the intended rule -- "A near duplicate
-   * never goes straight out, whatever the rules say" -- so this asserts that.
+   * So this asserts the column, and then asserts the replay.
    */
-  it('is held for review, not dropped', async () => {
+  it('is dropped, and stays dropped when the rules widen', async () => {
     const client = await makeClient({ accounts: 2, dailyCap: 50 });
     await rule(client.id, ['man']);
     const [first, second] = client.personality.accounts;
@@ -180,15 +175,47 @@ describeSheet('a near duplicate under a rule that does not match it', () => {
     expect(twin.displayName).toBe(original.displayName);
     expect(original.assignment!.state).toBe('queued');
 
-    // What should have happened to the one it was suspicious of.
-    expect(twin.assignment).not.toBeNull();
-    expect(twin.assignment!.state).toBe('review');
-    expect(twin.assignment!.reason).toContain('@timetogotawatch');
+    // Dropped, and the reason is on the row rather than in a log line.
+    expect(twin.assignment).toBeNull();
+    expect(twin.nearDuplicateOf).toBe('timetogotawatch');
 
-    // And the human has to be able to find it. This is the screen that decides
-    // whether the near-duplicate guard is a feature or a comment.
-    const review = await api.get(`/api/personalities/${client.personality.id}/review`);
-    expect(review.status).toBe(200);
-    expect(review.body.items.map((i: any) => i.handle)).toContain('timetogotowatch');
+    // Now the client widens to anyone, and the stored people are re-decided
+    // without another vision call. This is the free replay the pipeline is
+    // built around, and the moment the old in-memory verdict would have been
+    // gone.
+    await prisma.filterRule.updateMany({
+      where: { clientId: client.id },
+      data: { presentsAs: [] },
+    });
+    const people = await prisma.person.findMany({
+      where: { personalityId: client.personality.id },
+      select: { id: true },
+    });
+    const replayed = await h.pipeline.filter(
+      client.id,
+      people.map((p) => p.id),
+    );
+    await h.pipeline.allocate(second.id, replayed);
+
+    // The widened rule matched the twin on every predicate it has. The column
+    // is what kept it out.
+    expect(replayed.map((d) => d.personId)).not.toContain(twin.id);
+    expect(
+      await prisma.assignment.count({ where: { personId: twin.id } }),
+    ).toBe(0);
+    // And the man himself is still followed exactly once, by the account that
+    // found him first. Scoped to this personality: another spec runs the same
+    // two recorded replies in a parallel worker, and an unscoped query on the
+    // handle sees its rows too.
+    const assignments = await prisma.assignment.findMany({
+      where: {
+        person: {
+          personalityId: client.personality.id,
+          handle: { in: ['timetogotawatch', 'timetogotowatch'] },
+        },
+      },
+    });
+    expect(assignments).toHaveLength(1);
+    expect(assignments[0].accountId).toBe(first.id);
   });
 });

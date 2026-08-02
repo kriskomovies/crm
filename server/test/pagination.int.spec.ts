@@ -1,5 +1,5 @@
 /**
- * Cursor pagination over a personality's ledger and its review queue.
+ * Cursor pagination over a personality's target list and its ledger.
  *
  * The contract is `{ items, nextCursor }` walked on a stable unique column,
  * never OFFSET. What a real database is needed to prove is that the walk is
@@ -10,14 +10,16 @@
  */
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 
+import { slicePage } from '../src/common/pagination';
 import {
   addPeople,
+  addPeopleAtOneInstant,
   addPersonality,
   dropFixtures,
   makeClient,
   personalities,
   prisma,
-  queueReview,
+  targets,
 } from './fixtures';
 
 afterEach(dropFixtures);
@@ -114,15 +116,22 @@ describe('cursor pagination over targets', () => {
   });
 });
 
-describe('cursor pagination over the review queue', () => {
+describe('cursor pagination over the ledger', () => {
+  /**
+   * `targets` above orders by id, which is unique, so it can never tie. The
+   * ledger orders by [createdAt desc, id desc], and a whole sheet's people are
+   * written in one createMany and therefore share a createdAt exactly. This is
+   * the walk where the tiebreak is the only thing between the cursor and a page
+   * boundary that repeats or skips.
+   */
   it('walks rows that all share one createdAt without repeating or skipping', async () => {
     const client = await makeClient();
-    const account = client.personality.accounts[0];
-    const expected = await queueReview(client.personality.id, account.id, 250);
+    const expected = await addPeopleAtOneInstant(client.personality.id, 250);
 
-    const { handles, pageSizes } = await walk((cursor) =>
-      personalities.review(client.id, client.personality.id, 100, cursor),
-    );
+    const { handles, pageSizes } = await walk(async (cursor) => {
+      const rows = await targets.ledger(client.personality.id, 101, cursor);
+      return slicePage(rows, 100);
+    });
 
     // The primary sort key ties across every row, so this only holds if the
     // cursor comparison falls through to id.

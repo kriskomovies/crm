@@ -14,8 +14,8 @@
  * The last two are asked SEPARATELY on purpose. Asked as one combined
  * judgement, the model forwarded a woman whose avatar has long hair, eye makeup
  * and lipstick, because her display name reads male in English. Split, the
- * disagreement is visible and the profile can be held for review instead of
- * being sent to a client who asked for men.
+ * disagreement is visible and the profile is dropped instead of being sent to a
+ * client who asked for men.
  *
  * Neither inference is a claim about a person: one describes a cartoon they
  * chose, the other a name they typed.

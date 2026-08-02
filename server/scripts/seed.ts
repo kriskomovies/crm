@@ -508,7 +508,7 @@ async function main(): Promise<void> {
       const avatar = weighted(PRESENTS_TABLE);
       // The name usually agrees with the avatar. The minority that does not is
       // the whole reason namePresentsAs is stored separately, so it is seeded
-      // at a rate the review queue can actually be looked at.
+      // at a rate that visibly moves the gap between people and assignments.
       const name: PresentsValue = rng() < 0.09 ? weighted(PRESENTS_TABLE) : avatar;
       const combined = combinePresents(avatar, name);
 
@@ -566,26 +566,26 @@ async function main(): Promise<void> {
         ? sheet.accountId
         : enabled[roundRobin++ % enabled.length].id;
 
-      // A disagreement between avatar and name is never forwarded; the pipeline
-      // writes those as review, so the seed does too.
-      const state: AssignmentState = signalsDisagree(avatar, name)
-        ? $Enums.AssignmentState.review
-        : weighted<AssignmentState>([
-            [$Enums.AssignmentState.followed, 380],
-            [$Enums.AssignmentState.queued, 300],
-            [$Enums.AssignmentState.review, 110],
-            [$Enums.AssignmentState.handed_out, 80],
-            [$Enums.AssignmentState.skipped, 70],
-            [$Enums.AssignmentState.failed, 60],
-          ]);
+      // A disagreement between avatar and name is never forwarded, and the
+      // pipeline drops it rather than recording the decision anywhere -- so the
+      // seed leaves the person in the ledger with no assignment at all, which
+      // is exactly what `filter` does. Seeding a state here would invent a row
+      // the real pipeline cannot produce.
+      if (signalsDisagree(avatar, name)) continue;
+
+      const state: AssignmentState = weighted<AssignmentState>([
+        [$Enums.AssignmentState.followed, 380],
+        [$Enums.AssignmentState.queued, 300],
+        [$Enums.AssignmentState.handed_out, 80],
+        [$Enums.AssignmentState.skipped, 70],
+        [$Enums.AssignmentState.failed, 60],
+      ]);
 
       const assignedAt = new Date(createdAt.getTime() + int(1_000, 600_000));
       // handedOutAt is what the daily cap is metered on, so it is set for every
       // state that has actually been given to an account. A failed follow keeps
       // it -- the attempt was really made -- and so do the few requeued rows.
-      const wasHandedOut =
-        state !== $Enums.AssignmentState.review &&
-        (state !== $Enums.AssignmentState.queued || rng() < 0.03);
+      const wasHandedOut = state !== $Enums.AssignmentState.queued || rng() < 0.03;
       const handedOutAt = wasHandedOut
         ? new Date(Math.min(Date.now(), assignedAt.getTime() + int(60_000, 4 * DAY_MS)))
         : null;
@@ -596,13 +596,9 @@ async function main(): Promise<void> {
         accountId,
         state,
         reason:
-          state === $Enums.AssignmentState.review
-            ? signalsDisagree(avatar, name)
-              ? `avatar reads ${avatar}, name reads ${name}`
-              : `country confidence low below medium`
-            : source === $Enums.PersonSource.manual
-              ? 'added manually'
-              : `${presentsToDb(combined)}, ${nationality ?? 'unknown'}`,
+          source === $Enums.PersonSource.manual
+            ? 'added manually'
+            : `${presentsToDb(combined)}, ${nationality ?? 'unknown'}`,
         handedOutAt,
         resultAt:
           handedOutAt &&

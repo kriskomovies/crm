@@ -98,7 +98,7 @@ async function main(): Promise<void> {
     const name = toPresents(e.name_presents_as);
     if (signalsDisagree(avatar, name)) {
       conflicts++;
-      continue; // held for review, never forwarded
+      continue; // dropped by the filter, never forwarded
     }
     if (combinePresents(avatar, name) === 'man') {
       manBucket++;
@@ -108,7 +108,7 @@ async function main(): Promise<void> {
 
   console.log(`\nhandles exact against ground_truth.json   ${exact}/99`);
   console.log(`rejected as implausible handles           ${rejected}`);
-  console.log(`avatar/name conflicts held for review     ${conflicts}`);
+  console.log(`avatar/name conflicts dropped             ${conflicts}`);
   console.log(
     `man bucket ${manBucket}, of which women ${womenInBucket}` +
       (manBucket ? ` (${((womenInBucket / manBucket) * 100).toFixed(1)}%)` : ''),

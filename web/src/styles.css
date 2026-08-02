@@ -359,7 +359,6 @@ tr.off { opacity: 0.5; }
 .pill-queued { background: #1d2b45; color: #7fb0ff; }
 .pill-handed_out { background: #2a2340; color: #c4a6ff; }
 .pill-followed { background: #16301d; color: #57d16c; }
-.pill-review { background: #33280f; color: #e3b341; }
 .pill-failed, .pill-rejected { background: #3a1d1f; color: #ff8085; }
 .pill-skipped, .pill-none { background: #23272f; color: var(--muted); }
 .pill-extracted { background: #16301d; color: #57d16c; }

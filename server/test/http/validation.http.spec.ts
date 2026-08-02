@@ -505,7 +505,6 @@ describe('the cursor query param', () => {
    */
   it.each([
     ['targets', (id: string) => `/api/personalities/${id}/targets`],
-    ['review', (id: string) => `/api/personalities/${id}/review`],
     ['ledger', (id: string) => `/v1/personalities/${id}/ledger`],
   ])('WRONG: %s treats an unknown cursor as the end of the list', async (_label, url) => {
     const c = await ctx();
@@ -550,15 +549,15 @@ describe('the cursor query param', () => {
 });
 
 describe('the state and q query params', () => {
-  it('rejects an unknown state and lists the six that exist', async () => {
+  it('rejects an unknown state and lists the five that exist', async () => {
     const c = await ctx();
     const res = await api.get(`/api/personalities/${c.personalityId}/targets?state=bogus`, {
       auth: c.auth,
     });
     expect(res.status).toBe(400);
-    // The caller gets to know which of the six it should have sent; an
+    // The caller gets to know which of the five it should have sent; an
     // unchecked cast used to make this a 500 out of the query engine.
-    expect(messages(res.body)).toContain('queued, handed_out, followed, failed, skipped, review');
+    expect(messages(res.body)).toContain('queued, handed_out, followed, failed, skipped');
   });
 
   it('filters on a known state', async () => {

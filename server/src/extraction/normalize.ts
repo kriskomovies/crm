@@ -185,7 +185,7 @@ export function combinePresents(
   return name === 'unknown' ? 'ambiguous' : name;
 }
 
-/** True when avatar and name each state a sex and they conflict -> review. */
+/** True when avatar and name each state a sex and they conflict -> dropped. */
 export function signalsDisagree(
   avatar: PresentsValue,
   name: PresentsValue,

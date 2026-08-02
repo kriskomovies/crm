@@ -93,11 +93,6 @@ export const ROUTES: RouteSpec[] = [
     body: { handles: ['auth_matrix'] },
   },
   {
-    method: 'GET',
-    path: '/api/personalities/:id/review',
-    sample: `/api/personalities/${ABSENT}/review`,
-  },
-  {
     method: 'DELETE',
     path: '/api/personalities/:id',
     sample: `/api/personalities/${ABSENT}`,

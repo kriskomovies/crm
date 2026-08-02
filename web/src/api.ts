@@ -10,7 +10,6 @@ export type Account = {
   queued: number;
   handedOut: number;
   followed: number;
-  review: number;
 };
 
 export type Personality = {
@@ -74,7 +73,6 @@ export type StatsTotals = {
   skipped: number;
   queued: number;
   handedOut: number;
-  review: number;
 };
 
 export type StatsDay = {
@@ -174,7 +172,6 @@ function asStats(raw: unknown): Stats {
       skipped: num(t.skipped),
       queued: num(t.queued),
       handedOut: num(t.handedOut),
-      review: num(t.review),
     },
     byDay: rows(r.byDay).map((d) => ({
       date: str(d.date),

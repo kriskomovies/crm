@@ -23,7 +23,6 @@ import {
   dropFixtures,
   makeClient,
   prisma,
-  queueReview,
   queueTargets,
   TestClient,
 } from '../fixtures';
@@ -87,14 +86,6 @@ describe('every list endpoint answers in the {items, nextCursor} envelope', () =
     expect(res.body.items).toHaveLength(3);
   });
 
-  it('GET /api/personalities/:id/review', async () => {
-    const c = await ctx();
-    await queueReview(c.personalityId, c.accountId, 2);
-    const res = await api.get(`/api/personalities/${c.personalityId}/review`, { auth: c.auth });
-    expectEnvelope(res);
-    expect(res.body.items).toHaveLength(2);
-  });
-
   it('GET /api/sheets', async () => {
     const c = await ctx();
     await addSheet(c.accountId);
@@ -120,7 +111,6 @@ describe('every list endpoint answers in the {items, nextCursor} envelope', () =
   it.each([
     ['GET /api/personalities', (c: Ctx) => '/api/personalities'],
     ['GET /api/personalities/:id/targets', (c: Ctx) => `/api/personalities/${c.personalityId}/targets`],
-    ['GET /api/personalities/:id/review', (c: Ctx) => `/api/personalities/${c.personalityId}/review`],
     ['GET /api/sheets', () => '/api/sheets'],
     ['GET /v1/personalities/:id/ledger', (c: Ctx) => `/v1/personalities/${c.personalityId}/ledger`],
   ])('%s keeps the envelope when there is nothing to return', async (_label, url) => {

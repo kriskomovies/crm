@@ -227,8 +227,8 @@ model Person {
   /// Judged from the avatar alone, with the name hidden.
   avatarPresentsAs Presents @default(unknown)
   /// Judged from the display name alone, with the avatar hidden. When these two
-  /// disagree the profile goes to review rather than being forwarded -- that
-  /// disagreement caught a woman the combined judgement would have forwarded.
+  /// disagree the profile is dropped rather than forwarded -- that disagreement
+  /// caught a woman the combined judgement would have forwarded.
   namePresentsAs   Presents @default(unknown)
 
   nationality      String?
@@ -237,6 +237,18 @@ model Person {
   /// (see normalize.ts SKIN_TONES). Null when the model gave no usable answer.
   skinTone         String?
   avatarCues       String?
+
+  /// The existing handle this one is a single character away from, with the
+  /// same display name -- probably the same human, read differently once.
+  ///
+  /// Set at resolve time and kept, because it is the only place the verdict can
+  /// live. It used to be carried by a `review` assignment row, where UNIQUE
+  /// (personId) stopped a replay from queueing the twin; with review gone there
+  /// is no row. `filter` reads this column and drops the person, so replaying
+  /// filter+allocate after a rule change cannot queue both readings and follow
+  /// one man twice. UNIQUE (personId) cannot catch that on its own -- they are
+  /// two distinct Person rows, which is precisely the problem.
+  nearDuplicateOf  String?
 
   firstSeenSheetId String?
   timesSeen        Int      @default(1)
@@ -259,6 +271,9 @@ model Person {
   @@map("people")
 }
 
+/// Every state here descends from a forward. A person who did not match is
+/// dropped and simply has no assignment row -- the ledger keeps them so a later
+/// rule change can pick them up, but nothing is queued for a human to decide.
 enum AssignmentState {
   /// Matched the filter, waiting for its account to ask for work.
   queued
@@ -267,8 +282,6 @@ enum AssignmentState {
   followed
   failed
   skipped
-  /// Held for a human: low confidence, or avatar and name disagreed.
-  review
 }
 
 /// Which account is to follow this person. One per person, enforced by the
@@ -310,7 +323,8 @@ model FilterRule {
   /// Empty = any. Values from the closed skin-tone set: ["light","light-tan"].
   skinTones  String[]
   minConfidence String @default("medium")
-  /// forward | review | reject
+  /// forward | reject. There is no third option: a person is sent out or
+  /// dropped, never held.
   action    String   @default("forward")
   createdAt DateTime @default(now())
 

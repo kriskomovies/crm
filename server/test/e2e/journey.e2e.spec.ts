@@ -31,10 +31,10 @@ import { bootHarness, forwardEverything, Harness } from './app';
 
 /**
  * The one entry in the golden reply whose avatar and display name disagree:
- * the cartoon reads man, the name reads woman. `filter` holds it for review
- * before it consults any rule, which is the guard that keeps a woman out of a
- * client's men-only feed -- and the reason avatar and name are asked for
- * separately in the first place.
+ * the cartoon reads man, the name reads woman. `filter` drops it before it
+ * consults any rule, which is the guard that keeps a woman out of a client's
+ * men-only feed -- and the reason avatar and name are asked for separately in
+ * the first place.
  */
 const DISAGREEING_HANDLE = 'kylee258082';
 
@@ -126,18 +126,21 @@ describeSheet('screenshot to follow targets, over HTTP', () => {
     expect(typeof status.body.costUsd).toBe('number');
     expect(status.body.costUsd).toBeCloseTo(0.082209, 6);
 
-    // 98 forwarded, and the one the avatar and the name disagreed about held.
-    const held = await prisma.assignment.findFirstOrThrow({
-      where: { person: { personalityId: kris.id, handle: DISAGREEING_HANDLE } },
+    // 98 forwarded, and the one the avatar and the name disagreed about dropped.
+    // Dropped is the ABSENCE of an assignment, not a state: there is no row to
+    // hand out and none for a human to look at. The Person row survives, which
+    // is what makes widening the rules later a free replay rather than another
+    // vision call.
+    const disagreeing = await prisma.person.findFirstOrThrow({
+      where: { personalityId: kris.id, handle: DISAGREEING_HANDLE },
+      include: { assignment: true },
     });
-    expect(held.state).toBe('review');
-    expect(held.reason).toBe('avatar reads man, name reads woman');
+    expect(disagreeing.assignment).toBeNull();
     expect(
       await prisma.assignment.count({ where: { accountId: first.id, state: 'queued' } }),
     ).toBe(98);
-    expect(
-      await prisma.assignment.count({ where: { accountId: first.id, state: 'review' } }),
-    ).toBe(1);
+    // And nothing else either -- 98 forwards is the whole of what the sheet produced.
+    expect(await prisma.assignment.count({ where: { accountId: first.id } })).toBe(98);
 
     // (d) the same sheet on a SIBLING account: nobody new, nothing assigned.
     // Scripted with the SECOND real run over this image rather than a replay of
@@ -170,7 +173,8 @@ describeSheet('screenshot to follow targets, over HTTP', () => {
     expect(otherRun.error).toBeNull();
 
     expect(await prisma.person.count({ where: { personalityId: mia.id } })).toBe(99);
-    expect(await prisma.assignment.count({ where: { accountId: mia.accounts[0].id } })).toBe(99);
+    // 98, not 99: mia reads the same sheet, so mia drops the same disagreement.
+    expect(await prisma.assignment.count({ where: { accountId: mia.accounts[0].id } })).toBe(98);
     // One handle, two rows, one per personality. A global unique would have
     // made the second of these silently impossible.
     expect(
@@ -192,7 +196,7 @@ describeSheet('screenshot to follow targets, over HTTP', () => {
       reason: expect.any(String),
     });
     expect(groundTruthHandles()).toContain(claim.body.targets[0].handle);
-    // The held-for-review one is not work, and must never be handed out.
+    // The dropped one has no assignment at all, so it cannot be handed out.
     expect(claim.body.targets.map((t: any) => t.handle)).not.toContain(DISAGREEING_HANDLE);
 
     // Spent. The cap is the only thing protecting the Snapchat account from

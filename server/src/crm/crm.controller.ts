@@ -51,7 +51,7 @@ export class CrmController {
     const clientId = req.client.id;
     const [personalities, spend, states] = await Promise.all([
       // Delegated rather than rebuilt. This route had grown its own version of
-      // the same rollup that asked for each account's queued count, review
+      // the same rollup that asked for each account's queued count, followed
       // count and today's handouts one account at a time: three round trips per
       // account, 30,000 at a hundred clients, and the dashboard never loads.
       this.personalities.list(clientId),

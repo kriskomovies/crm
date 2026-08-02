@@ -141,7 +141,7 @@ describe('presents_as combination', () => {
     );
   });
 
-  it('flags a genuine conflict for review', () => {
+  it('flags a genuine conflict, which the filter drops on', () => {
     expect(signalsDisagree('man', 'woman')).toBe(true);
     expect(signalsDisagree('woman', 'man')).toBe(true);
     expect(signalsDisagree('man', 'ambiguous')).toBe(false);

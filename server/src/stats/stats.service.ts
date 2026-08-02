@@ -237,17 +237,17 @@ export class StatsService {
         }),
 
         /**
-         * Forwarded = reached an account's queue at all. PipelineService
-         * writes a 'forward' decision as `queued` and everything downstream of
-         * it (handed_out, followed, failed, skipped) descends from one, while a
-         * held-back person is written as `review` and a rejected one gets no
-         * assignment row. So "has an assignment that is not review" is the
-         * question, and FILTER answers it in the same pass as the count.
+         * Forwarded = reached an account's queue at all. PipelineService writes
+         * a forward as `queued` and every other state (handed_out, followed,
+         * failed, skipped) descends from one, while a dropped person gets no
+         * assignment row at all. So the existence of the row IS the answer, and
+         * COUNT over the LEFT JOIN gives it in the same pass as the total --
+         * this used to need a FILTER to exclude the held-for-a-human rows.
          */
         this.prisma.$queryRaw<CountryRow[]>`
           SELECT p.nationality AS nationality,
                  COUNT(*)::int AS count,
-                 COUNT(a.id) FILTER (WHERE a.state <> 'review')::int AS forwarded
+                 COUNT(a.id)::int AS forwarded
           FROM people p
           LEFT JOIN assignments a ON a."personId" = p.id
           WHERE p."createdAt" >= ${fromLit}::timestamp
@@ -354,7 +354,6 @@ export class StatsService {
         skipped: stateTotals.skipped ?? 0,
         queued: stateTotals.queued ?? 0,
         handedOut: stateTotals.handed_out ?? 0,
-        review: stateTotals.review ?? 0,
       },
       byDay: days,
       byPersonality,

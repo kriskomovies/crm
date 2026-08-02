@@ -139,21 +139,6 @@ export class PersonalitiesController {
     return this.personalities.attach(req.client.id, id, dto.handles, dto.source ?? 'manual');
   }
 
-  /**
-   * The review queue. The service method existed and was reachable from
-   * nothing: no route mapped to it, so the screen the near-duplicate guard
-   * feeds answered 404 while the guard quietly filled it.
-   */
-  @Get(':id/review')
-  review(
-    @Param('id') id: string,
-    @Query('limit', new DefaultValuePipe(100), ParseIntPipe) limit: number,
-    @Req() req: any,
-    @Query('cursor') cursor?: string,
-  ) {
-    return this.personalities.review(req.client.id, id, limit, cursor);
-  }
-
   @Delete(':id')
   @HttpCode(204)
   async remove(@Param('id') id: string, @Req() req: any) {

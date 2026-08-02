@@ -125,8 +125,7 @@ export function Stats({ personalities }: { personalities: Personality[] }) {
           </div>
 
           <p className="muted small pipeline">
-            queued {count(t.queued)} · handed out {count(t.handedOut)} · in review{' '}
-            {count(t.review)}
+            queued {count(t.queued)} · handed out {count(t.handedOut)}
           </p>
 
           <section className="panel">

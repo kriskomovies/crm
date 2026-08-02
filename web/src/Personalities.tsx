@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import { api, type Account, type Personality } from './api';
-import { CapBar, Pill } from './ui';
+import { CapBar } from './ui';
 
 const CAP_MIN = 0;
 const CAP_MAX = 1000;
@@ -185,7 +185,6 @@ function PersonalityCard({
                 <th className="num">queued</th>
                 <th className="num">handed out</th>
                 <th className="num">followed</th>
-                <th className="num">review</th>
                 <th></th>
               </tr>
             </thead>
@@ -257,9 +256,6 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
       </td>
       <td data-label="followed" className="num">
         {a.followed || ''}
-      </td>
-      <td data-label="review" className="num">
-        {a.review ? <Pill value="review" /> : ''}
       </td>
       <td data-label="" className="actions">
         {err && <span className="error small">{err}</span>}

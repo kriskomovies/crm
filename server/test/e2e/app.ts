@@ -276,21 +276,21 @@ export async function bootHarness(): Promise<Harness> {
 }
 
 /**
- * A rule that forwards everything the filter is not obliged to hold back.
+ * A rule that forwards everything the filter is not obliged to drop.
  *
  * A client with NO FilterRule rows gets no decisions at all -- `filter` loops
  * over an empty rule list and returns nothing -- so every extracted person lands
  * in the ledger with no assignment and the handout has nothing to meter. That is
- * a real state a client can be in, and review-and-rules.e2e.spec.ts covers it on
- * purpose; it is simply no use as the baseline for testing anything downstream
- * of the filter, so every client here starts with one rule.
+ * a real state a client can be in, and rules.e2e.spec.ts covers it on purpose;
+ * it is simply no use as the baseline for testing anything downstream of the
+ * filter, so every client here starts with one rule.
  *
  * Deliberately permissive: empty presentsAs and empty countries both mean "any",
  * and minConfidence 'low' clears every entry in the recorded replies. The rules
  * are not what these tests are measuring -- what survives them is -- and a
  * narrow rule would make a routing change look like a pipeline regression. The
- * one thing it cannot wave through is an avatar/name disagreement, which
- * `filter` holds for review before it consults any rule at all.
+ * two things it cannot wave through are an avatar/name disagreement and a near
+ * duplicate, which `filter` drops before it consults any rule at all.
  */
 export async function forwardEverything(clientId: string): Promise<void> {
   await prisma.filterRule.create({

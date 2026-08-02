@@ -178,7 +178,7 @@ describeSheet('an implausible handle is skipped, the rest still land', () => {
   });
 });
 
-describeSheet('a near duplicate goes to review, not to a second follow', () => {
+describeSheet('a near duplicate is dropped, not followed a second time', () => {
   /**
    * Two independent extractions of ONE image read the same man as
    * `timetogotawatch` and `timetogotowatch`, both under the display name "Matt".
@@ -188,9 +188,11 @@ describeSheet('a near duplicate goes to review, not to a second follow', () => {
    *
    * It is NOT auto-merged, and that restraint is the point: `kadenm_o6` and
    * `kadenm_06` are also one character apart and are plausibly two real people,
-   * o/0 being the hardest glyph in this font. So a human decides.
+   * o/0 being the hardest glyph in this font. Merging would fuse them. So the
+   * twin is dropped instead: both ledger rows are kept, neither is followed.
+   * Losing one target is recoverable; following one man twice is not.
    */
-  it('flags the twin with a reason naming it, and leaves the original queued', async () => {
+  it('drops the twin, records what it looks like, and leaves the original queued', async () => {
     const client = await clientFor('gemini-3.6-flash', 2);
     const [first, second] = client.personality.accounts;
     const api = h.api(client.apiKey);
@@ -205,13 +207,18 @@ describeSheet('a near duplicate goes to review, not to a second follow', () => {
     expect(one.body.jobId).not.toBe(two.body.jobId);
     expect((await h.drainQueue())[0].error).toBeNull();
 
-    const twin = await prisma.assignment.findFirstOrThrow({
-      where: { person: { personalityId: client.personality.id, handle: 'timetogotowatch' } },
+    const twin = await prisma.person.findFirstOrThrow({
+      where: { personalityId: client.personality.id, handle: 'timetogotowatch' },
+      include: { assignment: true },
     });
-    expect(twin.state).toBe('review');
-    // The reason names the handle it looks like, so the human reviewing it does
-    // not have to search the ledger to find out what the machine meant.
-    expect(twin.reason).toContain('@timetogotawatch');
+    expect(twin.assignment).toBeNull();
+    // The verdict is ON THE ROW, not in an assignment and not only in the log.
+    // That is what makes the drop survive: `filter` is replayed over stored
+    // people after a rule change, and it re-reads this column to drop again. A
+    // verdict that lived only in the pipeline's memory would let that replay
+    // queue both readings and follow one man twice -- and UNIQUE (personId)
+    // cannot catch it, because these are two distinct Person rows.
+    expect(twin.nearDuplicateOf).toBe('timetogotawatch');
 
     // The original is untouched and still work for the account that found it.
     const original = await prisma.assignment.findFirstOrThrow({
@@ -222,14 +229,16 @@ describeSheet('a near duplicate goes to review, not to a second follow', () => {
 
     // The second read introduced 43 handles the first did not have, and 12 of
     // them are one character from a handle already in the ledger under the same
-    // display name. All 12 are held; the other 31 are work.
-    expect(await prisma.assignment.count({ where: { accountId: second.id } })).toBe(43);
-    expect(
-      await prisma.assignment.count({ where: { accountId: second.id, state: 'review' } }),
-    ).toBe(12);
+    // display name. All 12 are dropped; the other 31 are work.
+    expect(await prisma.assignment.count({ where: { accountId: second.id } })).toBe(31);
     expect(
       await prisma.assignment.count({ where: { accountId: second.id, state: 'queued' } }),
     ).toBe(31);
+    expect(
+      await prisma.person.count({
+        where: { personalityId: client.personality.id, nearDuplicateOf: { not: null } },
+      }),
+    ).toBe(12);
   });
 });
 

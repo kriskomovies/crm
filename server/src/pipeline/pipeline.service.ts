@@ -86,36 +86,18 @@ export class PipelineService {
     try {
       const entries = await this.extract(sheetId, sheet.storageKey, client);
       const people = await this.resolve(sheet.account.personalityId, sheetId, entries);
+      // Every drop rule lives in `filter`, including the near-duplicate one --
+      // `resolve` writes that verdict to Person.nearDuplicateOf and `filter`
+      // reads it back. It is deliberately not applied here from the in-memory
+      // result: the replay of filter+allocate after a rule change never runs
+      // this method, and a verdict that only existed in this variable would let
+      // that replay queue both readings of one person and follow him twice.
+      // UNIQUE (personId) cannot catch that -- they are two distinct Person
+      // rows, which is precisely what the guard had noticed.
       const decisions = await this.filter(
         client.id,
         people.map((p) => p.id),
       );
-      // A near duplicate never goes straight out, whatever the rules say: it may
-      // be the same human already assigned under a slightly different handle.
-      //
-      // Driven from the flagged people, not from the decisions. Walking the
-      // decisions only ever reached a person some rule had already matched, so
-      // the verdict was dropped for everyone else -- and "everyone else" is the
-      // common case, not a corner: a reply that carries no gender reading
-      // combines to 'ambiguous', matches no rule, and produces no decision at
-      // all. The twin was then stored, flagged, and silently forgotten, with no
-      // assignment row on either the queue or the review screen. Nothing
-      // downstream can recover it: the verdict lives only in this variable, so
-      // the free replay of filter+allocate after a rule change would queue both
-      // rows and follow one man twice. UNIQUE (personId) cannot catch that --
-      // they are two distinct Person rows, which is precisely what was noticed.
-      const byPerson = new Map(decisions.map((d) => [d.personId, d]));
-      for (const p of people) {
-        if (!p.nearDuplicateOf) continue;
-        const reason = `looks like @${p.nearDuplicateOf} read differently — confirm before following`;
-        const decided = byPerson.get(p.id);
-        if (decided) {
-          decided.action = 'review';
-          decided.reason = reason;
-        } else {
-          decisions.push({ personId: p.id, action: 'review', reason });
-        }
-      }
       await this.allocate(sheet.accountId, decisions);
 
       // Everything that will ever read this image has now read it. Not after
@@ -223,7 +205,7 @@ export class PipelineService {
     personalityId: string,
     sheetId: string,
     entries: RawEntry[],
-  ): Promise<{ id: string; isNew: boolean; nearDuplicateOf?: string | null }[]> {
+  ): Promise<{ id: string; isNew: boolean }[]> {
     // First occurrence of a handle wins. A sheet that lists someone twice is
     // still one person, and the row-at-a-time version bumped timesSeen twice
     // for it.
@@ -277,6 +259,16 @@ export class PipelineService {
       fresh.map((h) => rows.get(h)!.displayName),
     );
 
+    // Decided before the insert so the verdict goes into the row itself rather
+    // than being carried out of here in a variable. Person.nearDuplicateOf is
+    // what `filter` drops on, and what survives long enough for the replay
+    // after a rule change to drop on too.
+    for (const handle of fresh) {
+      const row = rows.get(handle)!;
+      row.nearDuplicateOf = nearDuplicate(handle, row.displayName, candidates);
+      candidates.push({ handle, displayName: row.displayName });
+    }
+
     if (before.size) {
       await this.prisma.person.updateMany({
         where: { personalityId, handle: { in: [...before.keys()] } },
@@ -304,19 +296,16 @@ export class PipelineService {
       }
     }
 
-    const out: { id: string; isNew: boolean; nearDuplicateOf?: string | null }[] = [];
+    const out: { id: string; isNew: boolean }[] = [];
     for (const handle of handles) {
       const known = before.get(handle);
       if (known) {
-        out.push({ id: known, isNew: false, nearDuplicateOf: null });
+        out.push({ id: known, isNew: false });
         continue;
       }
       const id = created.get(handle);
       if (!id) continue; // deleted between the insert and the read back
-      const displayName = rows.get(handle)!.displayName;
-      const twin = nearDuplicate(handle, displayName, candidates);
-      candidates.push({ handle, displayName });
-      out.push({ id, isNew: true, nearDuplicateOf: twin });
+      out.push({ id, isNew: true });
     }
     return out;
   }
@@ -344,14 +333,19 @@ export class PipelineService {
   }
 
   /**
-   * Apply the client's ordered rules. Everything is stored either way -- a
-   * rejected person stays in the ledger so a later rule change can pick them
-   * up without another model call.
+   * Apply the client's ordered rules. A person is forwarded or dropped, and a
+   * drop is the absence of a decision -- there is no third answer and nothing
+   * is held for a human.
+   *
+   * Everything is stored either way. A dropped person stays in the ledger, so a
+   * later rule change can pick them up without another model call; that replay
+   * re-enters here, which is why every reason to drop has to be readable from
+   * the stored row rather than from whatever the pipeline knew at the time.
    */
   async filter(
     clientId: string,
     personIds: string[],
-  ): Promise<{ personId: string; action: 'forward' | 'review'; reason: string }[]> {
+  ): Promise<{ personId: string; reason: string }[]> {
     const rules = await this.prisma.filterRule.findMany({
       where: { clientId, enabled: true },
       orderBy: { position: 'asc' },
@@ -360,22 +354,24 @@ export class PipelineService {
       where: { id: { in: personIds } },
     });
 
-    const decisions: { personId: string; action: 'forward' | 'review'; reason: string }[] = [];
+    const decisions: { personId: string; reason: string }[] = [];
     for (const p of people) {
       const avatar = toPresents(fromDb(p.avatarPresentsAs));
       const name = toPresents(fromDb(p.namePresentsAs));
 
+      // A near duplicate never goes out, whatever the rules say: it is probably
+      // the same human the ledger already holds under a handle misread by one
+      // character, and forwarding it follows him twice. Checked before the
+      // rules because it is a fact about the ledger, not about this client's
+      // predicates -- and dropped rather than merged, because `kadenm_o6` and
+      // `kadenm_06` are also one character apart and are plausibly two real
+      // people. Losing a target is recoverable; a double follow is not.
+      if (p.nearDuplicateOf) continue;
+
       // A conflict between the two signals is never a forward. This is the rule
       // that keeps a woman with a male-reading display name out of a men-only
-      // feed; it costs one review item and prevents the worst outcome.
-      if (signalsDisagree(avatar, name)) {
-        decisions.push({
-          personId: p.id,
-          action: 'review',
-          reason: `avatar reads ${avatar}, name reads ${name}`,
-        });
-        continue;
-      }
+      // feed.
+      if (signalsDisagree(avatar, name)) continue;
 
       for (const rule of rules) {
         const presents = fromDb(p.presentsAs);
@@ -411,22 +407,14 @@ export class PipelineService {
         ) {
           continue;
         }
-        if (!confidenceAtLeast(p.nationalityConf, rule.minConfidence)) {
-          decisions.push({
-            personId: p.id,
-            action: 'review',
-            reason: `country confidence ${p.nationalityConf ?? 'none'} below ${rule.minConfidence}`,
-          });
-          break;
-        }
+        // The rule matched on every predicate but the country reading behind it
+        // is weaker than the rule asked for, so it is not evidence the rule was
+        // really satisfied. Dropped, and the first-match-wins break still
+        // applies: a later rule does not get to re-answer a question this one
+        // already matched on.
+        if (!confidenceAtLeast(p.nationalityConf, rule.minConfidence)) break;
         if (rule.action === 'forward') {
-          decisions.push({
-            personId: p.id,
-            action: 'forward',
-            reason: `${presents}, ${p.nationality}`,
-          });
-        } else if (rule.action === 'review') {
-          decisions.push({ personId: p.id, action: 'review', reason: 'rule' });
+          decisions.push({ personId: p.id, reason: `${presents}, ${p.nationality}` });
         }
         break; // first matching rule wins
       }
@@ -445,33 +433,26 @@ export class PipelineService {
    */
   async allocate(
     accountId: string,
-    decisions: { personId: string; action: 'forward' | 'review'; reason: string }[],
+    decisions: { personId: string; reason: string }[],
   ): Promise<number> {
-    // Two statements, not one per decision. skipDuplicates is ON CONFLICT DO
+    if (decisions.length === 0) return 0;
+
+    // One statement, not one per decision. skipDuplicates is ON CONFLICT DO
     // NOTHING against UNIQUE (personId) -- the same collision the per-row
     // version caught P2002 from and ignored, because a person a sibling account
-    // already holds is the dedupe working rather than an error. The split by
-    // state is what keeps the returned count honest: it has to be the number of
-    // rows that really entered the queue, not the number offered.
-    const rows = (action: 'forward' | 'review') =>
-      decisions
-        .filter((d) => d.action === action)
-        .map((d) => ({
-          personId: d.personId,
-          accountId,
-          state: (action === 'forward' ? 'queued' : 'review') as AssignmentState,
-          reason: d.reason,
-        }));
-
-    const forward = rows('forward');
-    const review = rows('review');
-    const queued = forward.length
-      ? (await this.prisma.assignment.createMany({ data: forward, skipDuplicates: true })).count
-      : 0;
-    if (review.length) {
-      await this.prisma.assignment.createMany({ data: review, skipDuplicates: true });
-    }
-    return queued;
+    // already holds is the dedupe working rather than an error. Its count is
+    // what makes the return honest: the number of rows that really entered the
+    // queue, not the number offered.
+    const { count } = await this.prisma.assignment.createMany({
+      data: decisions.map((d) => ({
+        personId: d.personId,
+        accountId,
+        state: 'queued' as AssignmentState,
+        reason: d.reason,
+      })),
+      skipDuplicates: true,
+    });
+    return count;
   }
 }
 
@@ -497,8 +478,10 @@ function fromDb(v: string): string {
  * It does NOT auto-merge, and that restraint is deliberate. `kadenm_o6` and
  * `kadenm_06` are also one character apart and are plausibly two different
  * real accounts -- the o/0 pair is the single hardest glyph in this font.
- * Merging on distance alone would silently fuse two people. So a near
- * duplicate is routed to review and a human decides.
+ * Merging on distance alone would silently fuse two people. So the suspicion is
+ * recorded on the row and `filter` drops the newer of the two: both ledger
+ * entries are kept and neither is followed, which is recoverable in a way that
+ * following one man twice is not.
  *
  * An identical display name is required, not merely preferred: it is what makes
  * "same person, misread once" more likely than "two accounts that happen to

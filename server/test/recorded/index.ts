@@ -46,7 +46,7 @@ function load(file: string): string {
  * number that quietly moved.
  *
  * It also carries one real avatar/name disagreement (@kylee258082, avatar reads
- * man, name reads woman), which is the review rule the product is sold on, and
+ * man, name reads woman), which is the drop rule the product is sold on, and
  * three not-a-person avatars.
  */
 export const GOLDEN_99: RecordedReply = {
