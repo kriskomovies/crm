@@ -60,7 +60,12 @@ export async function main(): Promise<void> {
   if (client) {
     console.log(`client "${clientName}" already exists; adding to it. Key unchanged.`);
   } else {
-    apiKey = `sk_${randomBytes(32).toString('base64url')}`;
+    // --key registers a key you already have rather than inventing one. The
+    // deploy needs this: bootstrap writes a random OPERATOR_API_KEY into .env
+    // and Caddy injects it into /api/*, but nothing had ever registered it as a
+    // client -- so the operator UI authenticated at Caddy and then got 401 from
+    // the API, with both halves behaving exactly as designed.
+    apiKey = arg('key', '') || `sk_${randomBytes(32).toString('base64url')}`;
     client = await prisma.client.create({
       data: {
         name: clientName,
