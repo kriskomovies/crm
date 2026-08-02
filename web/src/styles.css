@@ -453,3 +453,36 @@ tr.off { opacity: 0.5; }
   color: #ff9a9e;
   font-size: 0.85rem;
 }
+
+/* ---- targeting -----------------------------------------------------------
+   Checkboxes as chips: the list is long enough that stacked rows push Save off
+   a laptop screen, and short enough that a multi-select would hide the options
+   that matter. */
+
+.targeting h3 { font-size: 0.9rem; margin: 1.25rem 0 0.5rem; }
+.targeting h3:first-of-type { margin-top: 1rem; }
+
+.chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.7rem;
+  border: 1px solid var(--line);
+  border-radius: 99px;
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on {
+  background: #1d3a6b;
+  border-color: #2b5498;
+  color: #dce9ff;
+}
+/* The native control is the accessible one; hiding it would break keyboard and
+   screen-reader use, so it stays and is merely small. */
+.chip input { accent-color: var(--accent); margin: 0; }

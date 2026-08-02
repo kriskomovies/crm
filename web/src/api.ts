@@ -246,6 +246,20 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
   return (body ? JSON.parse(body) : undefined) as T;
 }
 
+export interface Rule {
+  presentsAs: string[];
+  countries: string[];
+  minConfidence: string;
+  action?: string;
+  enabled?: boolean;
+}
+
+export interface RuleOptions {
+  origins: string[];
+  presentsAs: string[];
+  confidences: string[];
+}
+
 export interface Session {
   authenticated: boolean;
   client?: { id: string; name: string };
@@ -262,6 +276,16 @@ export const api = {
     }),
 
   logout: () => req<Session>('/api/session', { method: 'DELETE' }),
+
+  /** The vocabulary travels with the value: the UI never hardcodes an origin
+   *  list that could drift out of step with what the extractor returns. */
+  rules: () => req<{ options: RuleOptions; rule: Rule }>('/api/rules'),
+
+  saveRules: (rule: Rule) =>
+    req<{ saved: boolean; rule: Rule; note?: string }>('/api/rules', {
+      method: 'PUT',
+      body: JSON.stringify(rule),
+    }),
 
   // Asks for a page and keeps only the items: this drives the 5s overview poll
   // and the personality filter, neither of which can page. 500 is the contract

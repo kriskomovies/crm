@@ -6,6 +6,7 @@ import { ApiKeyGuard } from './auth/api-key.guard';
 import { SessionController } from './auth/session.controller';
 import { SessionService } from './auth/session.service';
 import { CrmController } from './crm/crm.controller';
+import { RulesController } from './crm/rules.controller';
 import {
   EnrolmentController,
   MachineEnrolmentController,
@@ -86,6 +87,7 @@ export class CoreModule {}
     PersonalitiesController, AccountsController,
     StatsController,
     CrmController,
+    RulesController,
     MachineEnrolmentController,
     EnrolmentController,
     SessionController,

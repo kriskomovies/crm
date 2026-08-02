@@ -5,12 +5,14 @@ import { Login } from './Login';
 import { Personalities } from './Personalities';
 import { Sheets } from './Sheets';
 import { Stats } from './Stats';
+import { Targeting } from './Targeting';
 import { Targets } from './Targets';
 
 type View =
   | { tab: 'personalities'; open: Personality | null }
   | { tab: 'stats' }
-  | { tab: 'sheets' };
+  | { tab: 'sheets' }
+  | { tab: 'targeting' };
 
 export default function App() {
   // null = not asked yet. Rendering the app or the login before the answer
@@ -100,6 +102,12 @@ export default function App() {
           >
             Sheets
           </button>
+          <button
+            className={view.tab === 'targeting' ? 'on' : ''}
+            onClick={() => setView({ tab: 'targeting' })}
+          >
+            Targeting
+          </button>
         </nav>
       </header>
 
@@ -110,6 +118,8 @@ export default function App() {
         {view.tab === 'stats' && <Stats personalities={data ?? []} />}
 
         {view.tab === 'sheets' && <Sheets />}
+
+        {view.tab === 'targeting' && <Targeting />}
 
         {view.tab === 'personalities' &&
           data &&

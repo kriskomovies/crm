@@ -24,7 +24,7 @@
 export const ABSENT = '00000000-0000-4000-8000-0000000000ff';
 
 export interface RouteSpec {
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
   /** As Express registers it, so the drift test can compare strings. */
   path: string;
   /** The same route with the params filled in. */
@@ -121,6 +121,15 @@ export const ROUTES: RouteSpec[] = [
     method: 'GET',
     path: '/api/sheets/:id/image',
     sample: `/api/sheets/${ABSENT}/image`,
+  },
+
+  // RulesController -- the targeting filter the Targeting page edits
+  { method: 'GET', path: '/api/rules', sample: '/api/rules' },
+  {
+    method: 'PUT',
+    path: '/api/rules',
+    sample: '/api/rules',
+    body: { presentsAs: ['man'], countries: ['English'], minConfidence: 'low' },
   },
 
   // EnrolmentController -- the operator's side of machine enrolment

@@ -48,7 +48,10 @@ export async function main(): Promise<void> {
   const personalityName = arg('personality');
   const labels = list('accounts', '');
   const cap = Number(arg('cap', '240'));
-  const countries = list('countries', 'italian,french,spanish,turkish,indian,greek,danish');
+  // English, and minConfidence low. Both measured, not guessed: three runs over
+  // the golden sheet put 64-66 of 99 names in the English bucket, and 80 of 99
+  // come back low confidence -- a medium bar passes 1 English-reading man in 65.
+  const countries = list('countries', 'English');
   const model = arg('model', 'gemini-3.6-flash');
 
   if (!labels.length) throw new Error('--accounts needs at least one label');
@@ -79,7 +82,7 @@ export async function main(): Promise<void> {
             position: 1,
             presentsAs: ['man'],
             countries,
-            minConfidence: 'medium',
+            minConfidence: 'low',
             action: 'forward',
           },
         },
