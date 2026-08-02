@@ -1,0 +1,35 @@
+# Line endings, and why this file has to exist.
+#
+# This repo is developed on Windows and deployed on Linux. Git's autocrlf turned
+# deploy/bootstrap.sh into CRLF in the working tree, `git archive` exported it
+# that way, and bash on the server read `set -euo pipefail\r` -- reporting
+# "pipefail: invalid option name", which says nothing at all about line endings.
+# Anything executed by a Unix interpreter must be LF regardless of the machine
+# it was written on.
+
+*.sh        text eol=lf
+*.bash      text eol=lf
+Dockerfile  text eol=lf
+Caddyfile   text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+.env        text eol=lf
+.env.*      text eol=lf
+
+# Windows-only, and must keep CRLF: cmd.exe mis-parses LF-only batch files in
+# ways that depend on where the line breaks fall.
+*.bat       text eol=crlf
+*.cmd       text eol=crlf
+
+# Let git decide for ordinary source; it is read by tools that do not care.
+*.ts        text
+*.js        text
+*.json      text
+*.md        text
+*.py        text
+
+# Never touch binaries.
+*.png       binary
+*.jpg       binary
+*.apk       binary
+*.exe       binary
