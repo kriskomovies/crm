@@ -34,6 +34,7 @@ import {
   sheetPrompt,
 } from '../extraction/sheet-task';
 import { PrismaService } from '../prisma/prisma.service';
+import { RetentionService } from '../retention/retention.service';
 import { StorageService } from '../storage/storage.service';
 
 /**
@@ -54,6 +55,7 @@ export class PipelineService {
     private readonly prisma: PrismaService,
     private readonly storage: StorageService,
     private readonly gateway: GatewayClient,
+    private readonly retention: RetentionService,
   ) {}
 
   async run(sheetId: string): Promise<void> {
@@ -114,6 +116,12 @@ export class PipelineService {
         }
       }
       await this.allocate(sheet.accountId, decisions);
+
+      // Everything that will ever read this image has now read it. Not after
+      // extract() returns -- resolve, filter and allocate are still to come,
+      // and a throw in any of them retries the whole job from the top with
+      // another getDataUri on this key.
+      await this.retention.onPipelineComplete(sheetId, sheet.storageKey);
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       this.log.error(`sheet ${sheetId} failed: ${message}`);

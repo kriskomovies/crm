@@ -20,6 +20,7 @@ import { hashApiKey } from '../src/auth/api-key.guard';
 import { GatewayClient } from '../src/extraction/gateway.client';
 import { PersonalitiesService } from '../src/personalities/personalities.service';
 import { PipelineService } from '../src/pipeline/pipeline.service';
+import { RetentionService } from '../src/retention/retention.service';
 import { StorageService } from '../src/storage/storage.service';
 import { TargetsService } from '../src/targets/targets.service';
 
@@ -27,8 +28,14 @@ export const prisma = new PrismaClient();
 
 // `as any` for the client, as scripts/demo.ts does: PrismaService adds only
 // Nest lifecycle hooks to PrismaClient, and there is no Nest lifecycle here.
-const pipeline = new PipelineService(prisma as any, new StorageService(), new GatewayClient());
-export const personalities = new PersonalitiesService(prisma as any, pipeline);
+const storage = new StorageService();
+// Constructed but never started: onModuleInit is what arms the sweep timer, and
+// Nest is not running it here. The request-driven paths -- the delete after the
+// pipeline commits, and the purge before a personality cascade -- work without
+// it, which is exactly what these fixtures exercise.
+const retention = new RetentionService(prisma as any, storage);
+const pipeline = new PipelineService(prisma as any, storage, new GatewayClient(), retention);
+export const personalities = new PersonalitiesService(prisma as any, pipeline, retention);
 export const targets = new TargetsService(prisma as any);
 
 export interface TestAccount {

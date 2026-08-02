@@ -80,7 +80,8 @@ services:
       # Never bake this into the image. Rotate the key that was pasted in chat.
       APIMART_API_KEY: ${APIMART_API_KEY:?set APIMART_API_KEY in .env}
       APIMART_BASE_URL: ${APIMART_BASE_URL:-https://api.apimart.ai/v1}
-      SHEET_RETENTION_DAYS: ${SHEET_RETENTION_DAYS:-14}
+      SHEET_RETENTION_DAYS: ${SHEET_RETENTION_DAYS:-0}
+      SHEET_FAILED_RETENTION_DAYS: ${SHEET_FAILED_RETENTION_DAYS:-7}
       RETENTION_SWEEP_MINUTES: ${RETENTION_SWEEP_MINUTES:-60}
       NODE_ENV: production
       # Only the worker sweeps. Both services import CoreModule, so leaving the

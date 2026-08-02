@@ -1,33 +1,35 @@
 /**
- * Deletes stored sheet images once they are older than the retention window.
+ * Deletes stored sheet images once nothing will ask for them again.
  *
- * Without this the service has two write paths into object storage and no
- * delete path at all. A sheet is ~1.2 MB and the design target is 20,000 a day,
- * so storage grows ~24 GB a day and ~8.8 TB a year on a single VPS volume, and
- * every byte of it is an image that was read exactly once -- by the extraction
- * call -- and never again.
+ * The image is read exactly once, by the extraction call. Nothing reads it
+ * afterwards: the CRM has no screen that displays it, and the replay that IS
+ * implemented -- re-running filter/allocate after a rule change -- reads
+ * Extraction.rawReply, never the pixels. So the default is to delete it the
+ * moment the pipeline finishes with it, and storage stays flat at roughly the
+ * number of sheets in flight instead of growing ~24 GB/day forever.
  *
- * What is kept and what goes:
+ * SHEET_RETENTION_DAYS
+ *   0   delete as soon as the pipeline completes           (default)
+ *   N   keep N days, then sweep
+ *   <0  keep forever
  *
- *   the Sheet row      KEPT. It is a few hundred bytes, it carries the cost and
- *                      throughput history /api/stats reports, and its
- *                      (accountId, sha256) uniqueness is what makes a client's
- *                      re-upload after a network blip free instead of a second
- *                      vision call.
- *   Extraction.rawReply KEPT. It is the model's verbatim answer, ~18 KB before
- *                      TOAST compression, and it is what lets filter and
- *                      allocate be replayed after a rule change without paying
- *                      for vision again. Replay reads this, never the image.
- *   the image          DELETED after RETENTION_DAYS.
+ * SHEET_FAILED_RETENTION_DAYS (default 7)
+ *   Failed and rejected sheets keep their image for this long whatever the
+ *   above says. They are the only ones worth looking at -- when a sheet comes
+ *   back garbled you cannot tell a bad capture from a bad model without the
+ *   image -- and they are rare, so the window is nearly free.
  *
- * Only sheets in a TERMINAL status are pruned. A sheet still `received` or
- * `extracting` has a queued job that will ask for its bytes, and deleting them
- * underneath it would turn a retry into a permanent failure.
+ * WHY NOT DELETE THE INSTANT EXTRACTION RETURNS: run() continues into resolve,
+ * filter and allocate. A throw in any of them fails the job, BullMQ retries it,
+ * and run() reads storageKey again. Deleting at the end of extract() would turn
+ * every transient database error in the second half of the pipeline into a
+ * permanent loss of the sheet. The deletion hook is called after allocate, when
+ * the whole pipeline has committed.
  *
- * The sweep is idempotent and safe to interrupt: storage.remove treats a
- * missing key as success, and storageKey is nulled only after the object is
- * gone, so a crash mid-sweep leaves at worst an already-deleted object still
- * pointed at, which the next sweep resolves.
+ * What is never deleted: the Sheet row, a few hundred bytes carrying the cost
+ * and throughput history /api/stats reports and the (accountId, sha256)
+ * uniqueness that makes a client's retry free; and Extraction.rawReply, the
+ * model's verbatim answer.
  */
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { SheetStatus } from '@prisma/client';
@@ -35,18 +37,16 @@ import { SheetStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StorageService } from '../storage/storage.service';
 
-/** Statuses where no queued job will ever ask for the image again. */
-const TERMINAL: SheetStatus[] = [
-  SheetStatus.extracted,
-  SheetStatus.partial,
-  SheetStatus.failed,
-  SheetStatus.rejected,
-];
+/** The pipeline ran to completion. Nothing will ask for the image again. */
+const SUCCEEDED: SheetStatus[] = [SheetStatus.extracted, SheetStatus.partial];
+
+/** Terminal, but worth keeping the evidence for a while. */
+const FAILED: SheetStatus[] = [SheetStatus.failed, SheetStatus.rejected];
 
 /**
  * How many to delete per sweep pass. Object deletes are one round trip each,
- * so an unbounded sweep after a long outage would hold the loop for hours;
- * the sweep simply resumes on the next tick.
+ * so an unbounded sweep after a long outage would hold the loop for hours; it
+ * simply resumes on the next tick.
  */
 const BATCH = 500;
 
@@ -56,13 +56,8 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
-  /**
-   * 0 disables retention and keeps every image forever, which is the old
-   * behaviour and a legitimate choice for a small deployment. It is opt-out
-   * rather than opt-in because the failure mode of forgetting to set it is a
-   * full disk.
-   */
-  private readonly days = Number(process.env.SHEET_RETENTION_DAYS ?? 14);
+  private readonly days = Number(process.env.SHEET_RETENTION_DAYS ?? 0);
+  private readonly failedDays = Number(process.env.SHEET_FAILED_RETENTION_DAYS ?? 7);
   private readonly everyMs =
     Number(process.env.RETENTION_SWEEP_MINUTES ?? 60) * 60_000;
 
@@ -70,13 +65,12 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
    * This service lives in CoreModule, which both entrypoints import, so without
    * a switch the API and the worker would each sweep on their own timer --
    * selecting the same rows and racing on the same keys. Compose sets
-   * RETENTION_SWEEP=off on the api service and leaves the worker to it.
+   * RETENTION_SWEEP=off on the api and leaves the worker to it.
    *
-   * The default is ON so that a single-process deployment still prunes: with
-   * QUEUE_DRIVER=inline there is no worker at all, and a default of off would
-   * mean the disk quietly fills on exactly the small setups least able to
-   * absorb it. purgeKeys stays callable either way -- it is request-driven, not
-   * swept, and PersonalitiesService needs it in the API process.
+   * Default ON so a single-process deployment still prunes: with
+   * QUEUE_DRIVER=inline there is no worker at all. The two request-driven
+   * paths, onPipelineComplete and purgeKeys, ignore this flag entirely -- they
+   * must run wherever the work lands.
    */
   private readonly sweeps = (process.env.RETENTION_SWEEP ?? 'on') !== 'off';
 
@@ -86,23 +80,22 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
+    this.log.log(
+      this.days === 0
+        ? 'retention: deleting sheet images as soon as the pipeline completes' +
+            `, failures kept ${this.failedDays}d`
+        : this.days < 0
+          ? 'retention: keeping every sheet image forever (SHEET_RETENTION_DAYS<0)'
+          : `retention: keeping sheet images ${this.days}d, failures ${this.failedDays}d`,
+    );
     if (!this.sweeps) {
       this.log.log('retention: sweeping disabled in this process (RETENTION_SWEEP=off)');
       return;
     }
-    if (!(this.days > 0)) {
-      this.log.warn(
-        'SHEET_RETENTION_DAYS is 0 or unset-to-zero: sheet images are kept forever. ' +
-          'At the 20k/day design target that is ~24 GB/day.',
-      );
-      return;
-    }
-    this.log.log(
-      `retention: deleting sheet images older than ${this.days}d, sweeping every ${
-        this.everyMs / 60_000
-      }m`,
-    );
-    // unref so a pending sweep timer never holds the process open on shutdown.
+    // The sweep runs even when days is 0. The immediate delete is the fast
+    // path, not the guarantee: a crash between allocate and the unlink, or a
+    // sheet that failed and has now aged out, both leave objects only the sweep
+    // will ever find.
     this.timer = setInterval(() => void this.sweep(), this.everyMs);
     this.timer.unref?.();
   }
@@ -113,8 +106,36 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * One pass. Public so a deployment can trigger it directly and so the tests
-   * can drive it without waiting an hour for a timer.
+   * The pipeline has fully committed for this sheet: extracted, resolved,
+   * filtered and allocated. With SHEET_RETENTION_DAYS=0 this is where the image
+   * goes -- immediately, rather than sitting on disk until a sweep notices it.
+   *
+   * Never throws. A sheet whose image could not be deleted is a storage problem,
+   * not a pipeline problem, and failing the job here would re-run a vision call
+   * that already succeeded and cost money.
+   */
+  async onPipelineComplete(sheetId: string, storageKey: string | null): Promise<void> {
+    if (this.days !== 0 || !storageKey) return;
+    try {
+      await this.storage.remove(storageKey);
+      await this.prisma.sheet.update({
+        where: { id: sheetId },
+        data: { storageKey: null },
+      });
+    } catch (err) {
+      // Left for the sweep, which retries every object it still sees a pointer
+      // to. Warn, not error: the sheet itself is fine.
+      this.log.warn(
+        `retention: immediate delete failed for sheet ${sheetId}, leaving it to the sweep: ${
+          (err as Error).message
+        }`,
+      );
+    }
+  }
+
+  /**
+   * One pass. Public so a deployment can trigger it directly and so tests can
+   * drive it without waiting an hour for a timer.
    */
   async sweep(now = new Date()): Promise<{ deleted: number; failed: number }> {
     if (this.running) {
@@ -125,13 +146,45 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
     }
     this.running = true;
     try {
-      return await this.prune(new Date(now.getTime() - this.days * 86_400_000));
+      let deleted = 0;
+      let failed = 0;
+
+      if (this.days >= 0) {
+        // days === 0 means "no age condition at all": anything that completed
+        // and still has a pointer is overdue by definition.
+        const cutoff = this.days === 0 ? null : this.ago(now, this.days);
+        const r = await this.prune(SUCCEEDED, cutoff);
+        deleted += r.deleted;
+        failed += r.failed;
+      }
+
+      if (this.failedDays >= 0) {
+        const r = await this.prune(FAILED, this.ago(now, this.failedDays));
+        deleted += r.deleted;
+        failed += r.failed;
+      }
+
+      if (deleted || failed) {
+        this.log.log(
+          `retention: deleted ${deleted} sheet image(s)` +
+            (failed ? `, ${failed} failed` : ''),
+        );
+      }
+      return { deleted, failed };
     } finally {
       this.running = false;
     }
   }
 
-  private async prune(cutoff: Date): Promise<{ deleted: number; failed: number }> {
+  private ago(now: Date, days: number): Date {
+    return new Date(now.getTime() - days * 86_400_000);
+  }
+
+  /** @param cutoff null means no age condition. */
+  private async prune(
+    statuses: SheetStatus[],
+    cutoff: Date | null,
+  ): Promise<{ deleted: number; failed: number }> {
     let deleted = 0;
     let failed = 0;
 
@@ -139,8 +192,8 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
       const batch = await this.prisma.sheet.findMany({
         where: {
           storageKey: { not: null },
-          receivedAt: { lt: cutoff },
-          status: { in: TERMINAL },
+          status: { in: statuses },
+          ...(cutoff ? { receivedAt: { lt: cutoff } } : {}),
         },
         select: { id: true, storageKey: true },
         orderBy: { receivedAt: 'asc' },
@@ -169,20 +222,17 @@ export class RetentionService implements OnModuleInit, OnModuleDestroy {
         }
       }
 
-      if (batch.length < BATCH) break;
+      // A batch that failed entirely would loop forever re-selecting the same
+      // rows, since nothing about them changed.
+      if (batch.length < BATCH || deleted === 0) break;
     }
 
-    if (deleted || failed) {
-      this.log.log(
-        `retention: deleted ${deleted} sheet image(s) older than ${cutoff.toISOString()}` +
-          (failed ? `, ${failed} failed` : ''),
-      );
-    }
     return { deleted, failed };
   }
 
   /**
-   * Delete the images for a set of sheets right now, regardless of age.
+   * Delete the images for a set of sheets right now, regardless of age or
+   * status.
    *
    * Used when a personality is deleted: the cascade destroys the Sheet rows and
    * with them every storageKey, so unless the objects go first they become

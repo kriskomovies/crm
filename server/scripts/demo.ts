@@ -23,6 +23,7 @@ import { PrismaClient } from '@prisma/client';
 import { hashApiKey } from '../src/auth/api-key.guard';
 import { GatewayClient } from '../src/extraction/gateway.client';
 import { PipelineService } from '../src/pipeline/pipeline.service';
+import { RetentionService } from '../src/retention/retention.service';
 import { StorageService } from '../src/storage/storage.service';
 import { TargetsService } from '../src/targets/targets.service';
 
@@ -40,7 +41,10 @@ if (!process.env.APIMART_API_KEY) {
 
 const prisma = new PrismaClient();
 const storage = new StorageService();
-const pipeline = new PipelineService(prisma as any, storage, new GatewayClient());
+// SHEET_RETENTION_DAYS<0 keeps the demo's sheet image on disk, so you can open
+// what was extracted after the script prints its summary.
+const retention = new RetentionService(prisma as any, storage);
+const pipeline = new PipelineService(prisma as any, storage, new GatewayClient(), retention);
 const targets = new TargetsService(prisma as any);
 
 function rule(n: string) {

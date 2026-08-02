@@ -83,18 +83,36 @@ DNS must already point at the box or Caddy cannot issue a certificate. Only
 
 A sheet is ~1.2 MB and the design target is 20,000 a day: **~24 GB/day, ~8.8
 TB/year** of images that are read exactly once, by the extraction call. Until
-`SHEET_RETENTION_DAYS` existed there were two write paths into object storage
-and no delete path at all.
+this existed there were two write paths into object storage and no delete path
+at all.
+
+**The default is to delete the image as soon as the pipeline commits**, so
+storage stays flat at roughly the number of sheets in flight rather than growing
+forever.
 
 ```bash
-SHEET_RETENTION_DAYS=14     # 0 keeps every image forever
+SHEET_RETENTION_DAYS=0          # 0 = on completion · N = keep N days · <0 = forever
+SHEET_FAILED_RETENTION_DAYS=7   # failures keep their evidence regardless
 RETENTION_SWEEP_MINUTES=60
 ```
 
-The worker sweeps hourly and deletes the stored image of any sheet older than
-the window whose status is terminal — never one still `received` or
-`extracting`, because a queued job is about to ask for those bytes. What
-survives:
+Deletion happens **after `allocate`**, not when extraction returns. `run()` still
+has resolve → filter → allocate to go, and a throw in any of them fails the job;
+BullMQ retries from the top and reads the image again. Deleting at the end of
+`extract()` would turn a transient database error into permanent loss of the
+sheet.
+
+Failed and rejected sheets keep their image for `SHEET_FAILED_RETENTION_DAYS`.
+They are the only ones anyone looks at — when a sheet comes back garbled you
+cannot tell a bad capture from a bad model without the image — and they are rare
+enough that the window is nearly free.
+
+The hourly sweep is the safety net, not the mechanism: it catches sheets whose
+immediate delete was interrupted, and failures that have aged out. It never
+touches a sheet still `received` or `extracting`, because a queued job is about
+to ask for those bytes.
+
+What survives:
 
 | | |
 |---|---|
