@@ -1,13 +1,17 @@
-# Secrets. .env carries the vision-model key, the database password and the
-# operator login -- committing it is the whole compromise in one file.
-# These are listed explicitly rather than relying on the generic .env rules
-# below, because the point is too important to leave to a pattern.
-.env
+# .env IS committed, deliberately -- see the header inside it. The repo is
+# private and this is a single-operator deployment, so one synchronised file
+# beats configuring every box by hand.
+#
+# server/.env stays ignored and is a different thing: the LOCAL development
+# override (Postgres on 5433, QUEUE_DRIVER=inline). Committing it would push a
+# developer's machine settings onto the server, where inline means no worker and
+# no retries.
 server/.env
 vlm_eval/.apimart_key
 
-# The template ships .env.* too. Keep the negation: .env.example is the
-# deployment checklist and is meant to be committed.
+# .env.* still ignored -- .env.local and friends are per-machine by convention.
+# .env itself is negated back in, and .env.example remains the documented
+# template for anyone starting from scratch.
 .env.*
 !.env.example
 

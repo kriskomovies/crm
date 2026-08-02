@@ -66,8 +66,10 @@ else
 fi
 
 # ------------------------------------------------------------------ .env -----
-if [ ! -f .env ]; then
-  say "writing .env"
+if [ -f .env ]; then
+  say ".env present (committed), using it as-is"
+else
+  say "no .env -- generating one with per-machine secrets"
   gen() { openssl rand -base64 33 | tr -d '/+=' | cut -c1-32; }
 
   : "${APIMART_API_KEY:?set APIMART_API_KEY in the environment before running, e.g. APIMART_API_KEY=sk-... bash deploy/bootstrap.sh}"
@@ -113,8 +115,6 @@ EOF
   echo "$UI_PASSWORD" > .ui-password
   chmod 600 .ui-password
   warn "operator login: ${UI_USER} / ${UI_PASSWORD}   (also in .ui-password)"
-else
-  say ".env already exists, leaving it alone"
 fi
 
 # ------------------------------------------------------------------- up ------
