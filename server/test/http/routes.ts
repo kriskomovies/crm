@@ -141,6 +141,9 @@ export const ROUTES: RouteSpec[] = [
     body: { minutes: 10 },
   },
   { method: 'POST', path: '/api/enrolment/close', sample: '/api/enrolment/close' },
+  // Mints the bootstrap secret a machine presents to /v1/enrol. Guarded, and it
+  // has to be: anyone who can mint one can enrol a machine into this client.
+  { method: 'POST', path: '/api/enrolment/token', sample: '/api/enrolment/token' },
   {
     method: 'DELETE',
     path: '/api/enrolment/machines/:id',
@@ -175,8 +178,9 @@ export const UNGUARDED: RouteSpec[] = [
   { method: 'DELETE', path: '/api/session', sample: '/api/session' },
   {
     // How a machine with no credential gets one. Constrained instead by the
-    // operator's enrolment window: closed by default, expires on its own, and
-    // refuses outright when more than one client has it open.
+    // enrolment token it presents, or -- for agents built before the token
+    // existed -- by the operator's window: closed by default, expires on its
+    // own, and refuses outright when more than one client has it open.
     method: 'POST',
     path: '/v1/enrol',
     sample: '/v1/enrol',

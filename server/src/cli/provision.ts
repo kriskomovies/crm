@@ -11,6 +11,11 @@
  *     --client "my agency" --personality kris \
  *     --accounts kris_snap_01,kris_snap_02 --cap 240
  *
+ * And to mint the secret an emulator types alongside the server address:
+ *
+ *   docker compose exec api node dist/cli/provision.js \
+ *     --client "my agency" --enrol-token
+ *
  * There is no HTTP route that does this. The API key is hashed on the way in and
  * never stored in the clear, so there is nothing for an endpoint to hand back.
  *
@@ -34,6 +39,11 @@ function arg(name: string, fallback?: string): string {
   throw new Error(`--${name} is required`);
 }
 
+/** A bare `--flag`, with no value after it. */
+function flag(name: string): boolean {
+  return process.argv.includes(`--${name}`);
+}
+
 function list(name: string, fallback: string): string[] {
   // Whitespace as well as commas: PowerShell turns `a,b` into an array and
   // passes "a b", which silently became ONE account named "a b".
@@ -45,6 +55,15 @@ function list(name: string, fallback: string): string[] {
 
 export async function main(): Promise<void> {
   const clientName = arg('client');
+
+  // A mode of its own, because minting a token for an existing client has
+  // nothing to say about personalities or accounts and should not have to
+  // invent them to get at the flag.
+  if (flag('enrol-token')) {
+    await mintEnrolToken(clientName);
+    return;
+  }
+
   const personalityName = arg('personality');
   const labels = list('accounts', '');
   const cap = Number(arg('cap', '240'));
@@ -125,6 +144,45 @@ export async function main(): Promise<void> {
         'key. Keep it for the operator UI and for curl.',
     );
   }
+  console.log();
+}
+
+/**
+ * Mint (or rotate) the enrolment token and print it once.
+ *
+ * This is the secret an emulator types alongside the server address. It is not
+ * a working credential: /v1/enrol trades it for a key belonging to that one
+ * machine, so a box that is lost is revoked on its own. Rotating here does not
+ * disturb machines that already enrolled -- they hold their own keys and never
+ * present this again.
+ */
+async function mintEnrolToken(clientName: string): Promise<void> {
+  const client = await prisma.client.findFirst({ where: { name: clientName } });
+  if (!client) throw new Error(`no client named "${clientName}"`);
+
+  const token = `et_${randomBytes(32).toString('base64url')}`;
+  await prisma.client.update({
+    where: { id: client.id },
+    data: { enrolTokenHash: hashApiKey(token) },
+  });
+
+  const line = '='.repeat(72);
+  const rotated = client.enrolTokenHash !== null;
+  console.log(`\n${line}\nENROLMENT TOKEN -- SHOWN ONCE, ONLY THE HASH IS STORED\n${line}`);
+  console.log(token);
+  console.log(`\nclient  ${client.name}  (${client.id})`);
+  if (rotated) {
+    console.log(
+      'This REPLACES the previous token. Machines that already enrolled are\n' +
+        'unaffected -- they hold their own keys. Any machine still waiting to\n' +
+        'enrol needs this new one.',
+    );
+  }
+  console.log(
+    '\nType it into the agent next to the server address. Once your machines\n' +
+      'send it you can close the enrolment window for good:\n' +
+      '  curl -XPOST http://<host>/api/enrolment/close -H "Authorization: Bearer <operator key>"',
+  );
   console.log();
 }
 

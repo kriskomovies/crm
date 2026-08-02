@@ -62,7 +62,7 @@ machine.
 cd server && npx vitest run
 ```
 
-377 across four projects — 368 on a fresh clone, since the nine sheet-driven
+390 across four projects — 381 on a fresh clone, since the nine sheet-driven
 e2e tests skip until you supply the fixture above. `unit` (pure functions),
 `int` (real Postgres —
 per-personality scoping and the concurrent metered claim), `http` (auth, tenant
@@ -78,6 +78,39 @@ docker compose up -d --build
 
 DNS must already point at the box or Caddy cannot issue a certificate. Only
 80/443 are published; Postgres and MinIO bind loopback.
+
+## Enrolling a machine
+
+`POST /v1/enrol` is the one unauthenticated route — it has to be, it is how a
+box with no credential gets one. What limits it is an **enrolment token**: a
+bootstrap secret the operator types into the agent next to the server address.
+
+```bash
+docker compose exec api node dist/cli/provision.js --client "my agency" --enrol-token
+```
+
+Printed once, stored as a hash. The agent sends it as `{ name, token }` and gets
+back its own `sk_...` key plus the personalities and accounts it should run, so
+its config file holds no identity at all.
+
+The token is **not** a working credential and deliberately cannot be used as
+one. It buys exactly one thing: an `ApiKey` row for that single machine. A
+shared key pasted onto twenty boxes could not be revoked for one of them, which
+is the whole reason `api_keys` exists.
+
+The older path — an operator opening a timed window, no token — still works, and
+only because an agent built before the token has no field to send one from. It
+is the weaker of the two: while a window is open, **any** anonymous caller that
+finds the host can mint a key. Once your machines send a token, close it and
+leave it closed:
+
+```bash
+curl -XPOST http://<host>/api/enrolment/close -H "Authorization: Bearer <operator key>"
+```
+
+A token also names its own client, so several tenants can enrol machines
+simultaneously. The window path cannot: it scans every client and refuses
+outright when more than one has a window open.
 
 ## Forward or drop — there is no review
 

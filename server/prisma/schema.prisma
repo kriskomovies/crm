@@ -56,7 +56,23 @@ model Client {
   ///
   /// A window, not a flag, because the failure mode of "enrolment left on" is
   /// that anyone who finds the domain can mint a key. It expires on its own.
+  ///
+  /// Superseded by enrolTokenHash for machines that can send one. Kept because
+  /// an agent that predates the token has no field to put one in, and removing
+  /// this would strand every already-deployed box.
   enrolOpenUntil DateTime?
+
+  /// SHA-256 of the enrolment token, or null if this client has never minted
+  /// one. A machine presenting the token may enrol whatever the window says.
+  ///
+  /// It is a BOOTSTRAP secret and never a working credential: /v1/enrol trades
+  /// it for an ApiKey row belonging to that one machine. That is the whole
+  /// point -- a shared key pasted onto twenty boxes cannot be revoked for one
+  /// of them, which is the problem api_keys exists to solve.
+  ///
+  /// Unique so the lookup is by hash, like apiKeyHash. Hashed for the same
+  /// reason too: a database dump must not hand anyone the ability to enrol.
+  enrolTokenHash String? @unique
 
   personalities Personality[]
   filterRules   FilterRule[]

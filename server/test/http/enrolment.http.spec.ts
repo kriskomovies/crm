@@ -6,11 +6,12 @@
  * auth.http.spec.ts. That exemption is only defensible if the thing standing in
  * its place is tested at least as hard, which is what this file is.
  *
- * The property that matters: with no window open, an anonymous caller gets
- * nothing. Everything else here is a corollary.
+ * The property that matters: with no window open and no valid token, an
+ * anonymous caller gets nothing. Everything else here is a corollary.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { hashApiKey } from '../../src/auth/api-key.guard';
 import { dropFixtures, makeClient, prisma } from '../fixtures';
 import { bootHarness, Harness } from './app';
 
@@ -45,6 +46,17 @@ afterAll(async () => {
 
 const enrol = (name = 'test-box') =>
   api.request('POST', '/v1/enrol', { body: { name } });
+
+const enrolWith = (token: string, name = 'test-box') =>
+  api.request('POST', '/v1/enrol', { body: { name, token } });
+
+/** Give a client a known enrolment token, storing only its hash as the app does. */
+async function giveToken(clientId: string, token: string): Promise<void> {
+  await prisma.client.update({
+    where: { id: clientId },
+    data: { enrolTokenHash: hashApiKey(token) },
+  });
+}
 
 describe('POST /v1/enrol with no window open', () => {
   it('refuses, even though it takes no key', async () => {
@@ -129,6 +141,86 @@ describe('POST /v1/enrol inside a window', () => {
     // Revoking is only meaningful if it takes effect at once -- that is what it
     // is for when a machine is lost.
     expect((await api.request('GET', '/api/personalities', { auth })).status).toBe(401);
+  });
+});
+
+/**
+ * The token exists so that nothing has to be left open to the internet. Every
+ * test in here therefore runs with EVERY window shut -- that is the point, and
+ * a test that opened one would be proving nothing.
+ */
+describe('POST /v1/enrol with an enrolment token', () => {
+  it('enrols with no window open anywhere', async () => {
+    const c = await makeClient();
+    await giveToken(c.id, 'et_known_test_token');
+
+    const res = await enrolWith('et_known_test_token', 'emulator-11');
+    expect(res.status).toBe(201);
+    expect(res.body.apiKey).toMatch(/^sk_/);
+    expect(res.body.client.id).toBe(c.id);
+
+    const row = await prisma.apiKey.findFirstOrThrow({ where: { clientId: c.id } });
+    expect(row.name).toBe('emulator-11');
+    expect(row.revokedAt).toBeNull();
+  });
+
+  it('refuses a wrong token and issues nothing', async () => {
+    const c = await makeClient();
+    await giveToken(c.id, 'et_the_real_one');
+
+    const res = await enrolWith('et_not_the_real_one');
+    // 401, not 400: whoever is stood at the machine has to be able to tell "you
+    // typed it wrong" apart from "the server is not accepting enrolments".
+    expect(res.status).toBe(401);
+    expect(await prisma.apiKey.count({ where: { clientId: c.id } })).toBe(0);
+  });
+
+  it('names its own client, so two tenants at once is not ambiguous', async () => {
+    const a = await makeClient();
+    const b = await makeClient();
+    await giveToken(a.id, 'et_client_a');
+    await giveToken(b.id, 'et_client_b');
+    // Both windows open as well: the token must win outright rather than be
+    // consulted after the ambiguity check that the window path would fail on.
+    await prisma.client.updateMany({
+      where: { id: { in: [a.id, b.id] } },
+      data: { enrolOpenUntil: new Date(Date.now() + 60_000) },
+    });
+
+    const res = await enrolWith('et_client_b');
+    expect(res.status).toBe(201);
+    expect(res.body.client.id).toBe(b.id);
+    expect(await prisma.apiKey.count({ where: { clientId: a.id } })).toBe(0);
+    expect(await prisma.apiKey.count({ where: { clientId: b.id } })).toBe(1);
+  });
+
+  it('is a bootstrap secret and not a working credential', async () => {
+    const c = await makeClient();
+    await giveToken(c.id, 'et_bootstrap_only');
+
+    // The token opens exactly one door. If it also authenticated the guarded
+    // routes it would be the shared key that api_keys exists to avoid, and
+    // losing one box would mean rotating every box.
+    const res = await api.request('GET', '/api/personalities', {
+      auth: 'Bearer et_bootstrap_only',
+    });
+    expect(res.status).toBe(401);
+  });
+
+  it('rotating replaces the old token and leaves enrolled machines alone', async () => {
+    const c = await makeClient();
+    await giveToken(c.id, 'et_first');
+    const { body } = await enrolWith('et_first');
+    const auth = `Bearer ${body.apiKey}`;
+    expect((await api.request('GET', '/api/personalities', { auth })).status).toBe(200);
+
+    await giveToken(c.id, 'et_second');
+
+    expect((await enrolWith('et_first')).status).toBe(401);
+    expect((await enrolWith('et_second')).status).toBe(201);
+    // The already-enrolled machine holds its own key and never presents the
+    // token again, so a rotation must not knock it offline.
+    expect((await api.request('GET', '/api/personalities', { auth })).status).toBe(200);
   });
 });
 

@@ -15,7 +15,12 @@
  * Each machine gets its own row, so losing a box means revoking one key instead
  * of rotating the one key every other box is using.
  */
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 
 import { hashApiKey } from '../auth/api-key.guard';
@@ -24,6 +29,16 @@ import { PrismaService } from '../prisma/prisma.service';
 /** Long enough that guessing is hopeless; url-safe so it survives a TOML file. */
 function newKey(): string {
   return `sk_${randomBytes(32).toString('base64url')}`;
+}
+
+/**
+ * Same entropy as a key, different prefix. The prefix is the whole point: these
+ * two secrets are pasted by the same person into different boxes, and `et_`
+ * against `sk_` makes "I put the wrong one in" visible immediately rather than
+ * as an authentication failure three steps later.
+ */
+function newToken(): string {
+  return `et_${randomBytes(32).toString('base64url')}`;
 }
 
 export const DEFAULT_WINDOW_MINUTES = 10;
@@ -83,33 +98,39 @@ export class EnrolmentService {
   }
 
   /**
+   * Mint or rotate this client's enrolment token. Returned ONCE; only the hash
+   * is kept, so a lost token is replaced rather than looked up.
+   *
+   * Rotating does not disturb machines that have already enrolled: they hold
+   * their own ApiKey rows and never present this again.
+   */
+  async mintToken(clientId: string) {
+    const token = newToken();
+    await this.prisma.client.update({
+      where: { id: clientId },
+      data: { enrolTokenHash: hashApiKey(token) },
+    });
+    this.log.log(`enrolment token minted for client ${clientId}`);
+    return { token };
+  }
+
+  /**
    * The machine's side. UNAUTHENTICATED by design -- it is how a box with no
    * credential gets one -- so everything that limits it is here.
+   *
+   * Two ways in, and the token is the one to prefer. It names its own client, so
+   * it works with any number of tenants enrolling at once and needs nothing left
+   * open to the internet. The window is kept only because an agent built before
+   * the token has no field to send one from.
    */
-  async enrol(name: string) {
+  async enrol(name: string, token?: string) {
     const machine = (name ?? '').trim().slice(0, 80) || 'unnamed machine';
+    const presented = (token ?? '').trim();
 
-    const open = await this.prisma.client.findMany({
-      where: { enrolOpenUntil: { gt: new Date() } },
-      select: { id: true, name: true },
-    });
+    const client = presented
+      ? await this.byToken(presented)
+      : await this.byOpenWindow();
 
-    if (open.length === 0) {
-      // Deliberately says what to do rather than just refusing: this is the
-      // message an operator reads on a machine they are setting up.
-      throw new BadRequestException(
-        'enrolment is closed. Open it from the CRM (Machines -> Allow new machines) and press Start again within the window.',
-      );
-    }
-    if (open.length > 1) {
-      // Which tenant would this machine belong to? Guessing would silently
-      // attach someone's box to the wrong ledger.
-      throw new BadRequestException(
-        `enrolment is open for ${open.length} clients at once, so it is ambiguous. Close all but one and retry.`,
-      );
-    }
-
-    const client = open[0];
     const key = newKey();
     await this.prisma.apiKey.create({
       data: { clientId: client.id, name: machine, hash: hashApiKey(key) },
@@ -134,5 +155,48 @@ export class EnrolmentService {
     });
 
     return { apiKey: key, client: { id: client.id, name: client.name }, personalities };
+  }
+
+  /**
+   * A token identifies its client outright, so there is no window to consult and
+   * no ambiguity when several tenants are setting machines up at once.
+   *
+   * 401 rather than 400: a wrong token is a failed authentication, and the agent
+   * has to be able to tell "you typed the token wrong" apart from "the server is
+   * not accepting enrolments", which are different things for whoever is stood
+   * at the machine.
+   */
+  private async byToken(token: string): Promise<{ id: string; name: string }> {
+    const client = await this.prisma.client.findUnique({
+      where: { enrolTokenHash: hashApiKey(token) },
+      select: { id: true, name: true },
+    });
+    if (!client) throw new UnauthorizedException('invalid enrolment token');
+    return client;
+  }
+
+  /** The pre-token path: no token presented, so fall back to an open window. */
+  private async byOpenWindow(): Promise<{ id: string; name: string }> {
+    const open = await this.prisma.client.findMany({
+      where: { enrolOpenUntil: { gt: new Date() } },
+      select: { id: true, name: true },
+    });
+
+    if (open.length === 0) {
+      // Deliberately says what to do rather than just refusing: this is the
+      // message an operator reads on a machine they are setting up.
+      throw new BadRequestException(
+        'enrolment is closed. Send an enrolment token, or open a window from the CRM, and press Connect again.',
+      );
+    }
+    if (open.length > 1) {
+      // Which tenant would this machine belong to? Guessing would silently
+      // attach someone's box to the wrong ledger. A token does not have this
+      // problem, which is the other reason to prefer it.
+      throw new BadRequestException(
+        `enrolment is open for ${open.length} clients at once, so it is ambiguous. Send an enrolment token, or close all but one window and retry.`,
+      );
+    }
+    return open[0];
   }
 }
