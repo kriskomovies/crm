@@ -32,12 +32,9 @@ import {
   IsArray,
   IsBoolean,
   IsIn,
-  IsInt,
   IsOptional,
   IsString,
-  Max,
   MaxLength,
-  Min,
 } from 'class-validator';
 
 import { ApiKeyGuard } from '../auth/api-key.guard';
@@ -53,12 +50,6 @@ class CreateAccountDto {
   @IsString()
   @MaxLength(80)
   label!: string;
-
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1000)
-  dailyCap?: number;
 }
 
 class AttachTargetsDto {
@@ -79,13 +70,11 @@ class AttachTargetsDto {
   source?: 'manual' | 'extraction';
 }
 
+/**
+ * Pause and resume only. The cap moved to PUT /api/settings, where it is one
+ * number for the whole client -- see Client.dailyCapPerAccount.
+ */
 class UpdateAccountDto {
-  @IsOptional()
-  @IsInt()
-  @Min(0)
-  @Max(1000)
-  dailyCap?: number;
-
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
@@ -119,7 +108,7 @@ export class PersonalitiesController {
 
   @Post(':id/accounts')
   addAccount(@Param('id') id: string, @Body() dto: CreateAccountDto, @Req() req: any) {
-    return this.personalities.addAccount(req.client.id, id, dto.label, dto.dailyCap);
+    return this.personalities.addAccount(req.client.id, id, dto.label);
   }
 
   @Get(':id/targets')

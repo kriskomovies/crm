@@ -74,12 +74,12 @@ describe('registering an account that does not exist yet', () => {
     expect(res.body.account.remainingToday).toBe(res.body.account.dailyCap);
   });
 
-  it('takes the cap from the server default; the machine cannot ask for one', async () => {
+  it('is metered by the client setting; the machine cannot ask for a cap', async () => {
     const c = await bare();
 
-    // Young accounts hit Snapchat's add-cooldown around 40 a day, so the cap is
-    // the operator's to set in the CRM afterwards. forbidNonWhitelisted is what
-    // makes an attempt to send one a rejection rather than a silent no-op.
+    // The cap is one number for the whole client, set on the Settings screen.
+    // forbidNonWhitelisted is what makes an attempt to send one a rejection
+    // rather than a silent no-op.
     const rejected = await register(c.personality.id, c.apiKey, {
       handle: 'iraxcvp',
       dailyCap: 500,
@@ -87,8 +87,25 @@ describe('registering an account that does not exist yet', () => {
     expect(rejected.status).toBe(400);
 
     const { body } = await register(c.personality.id, c.apiKey, { handle: 'iraxcvp' });
-    const column = await prisma.account.findUniqueOrThrow({ where: { id: body.account.id } });
-    expect(body.account.dailyCap).toBe(column.dailyCap);
+    const client = await prisma.client.findUniqueOrThrow({ where: { id: c.id } });
+    expect(body.account.dailyCap).toBe(client.dailyCapPerAccount);
+  });
+
+  it('adopts a cap change without the account being touched', async () => {
+    const c = await bare();
+    const { body } = await register(c.personality.id, c.apiKey, { handle: 'iraxcvp' });
+    expect(body.account.dailyCap).toBe(50);
+
+    await api.request('PUT', '/api/settings', {
+      auth: `Bearer ${c.apiKey}`,
+      body: { dailyCapPerAccount: 240 },
+    });
+
+    // The point of one setting: nothing was written to the account row, and it
+    // is metered at the new number from its very next claim.
+    const again = await register(c.personality.id, c.apiKey, { handle: 'iraxcvp' });
+    expect(again.body.account.dailyCap).toBe(240);
+    expect(again.body.account.remainingToday).toBe(240);
   });
 
   it('stores what the machine saw, and keeps it out of the reply', async () => {

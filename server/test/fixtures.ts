@@ -41,6 +41,7 @@ export const targets = new TargetsService(prisma as any);
 export interface TestAccount {
   id: string;
   label: string;
+  /** The client's cap, echoed here so handout tests can assert against it. */
   dailyCap: number;
 }
 
@@ -67,11 +68,16 @@ interface FixtureOptions {
 /** Clients this run created, so afterEach can drop exactly those and no others. */
 const created: string[] = [];
 
+/**
+ * `dailyCap` is a CLIENT setting now, not a column here, so the fixtures set it
+ * on the client and echo it onto each TestAccount. Tests that say
+ * `makeClient({ dailyCap: 7 })` still read as "an account capped at 7", which
+ * is the property they were written to check.
+ */
 function accountData(name: string, opts: FixtureOptions) {
   const count = opts.accounts ?? 1;
   return Array.from({ length: count }, (_, i) => ({
     label: `${name}_snap_${String(i + 1).padStart(2, '0')}`,
-    dailyCap: opts.dailyCap ?? 50,
   }));
 }
 
@@ -85,6 +91,10 @@ export async function makeClient(opts: FixtureOptions = {}): Promise<TestClient>
       // what actually keeps concurrent runs from colliding on apiKeyHash.
       name: `int ${tag}`,
       apiKeyHash: hashApiKey(apiKey),
+      // The suite predates the global cap and assumes 50 in a lot of places, so
+      // that stays the fixture default. The PRODUCT default is 240 and is
+      // asserted where it belongs, on the schema, not implied here.
+      dailyCapPerAccount: opts.dailyCap ?? 50,
       personalities: { create: { name, accounts: { create: accountData(name, opts) } } },
     },
     include: { personalities: { include: { accounts: { orderBy: { label: 'asc' } } } } },
@@ -98,7 +108,11 @@ export async function makeClient(opts: FixtureOptions = {}): Promise<TestClient>
     personality: {
       id: p.id,
       name: p.name,
-      accounts: p.accounts.map((a) => ({ id: a.id, label: a.label, dailyCap: a.dailyCap })),
+      accounts: p.accounts.map((a) => ({
+        id: a.id,
+        label: a.label,
+        dailyCap: row.dailyCapPerAccount,
+      })),
     },
   };
 }
@@ -111,12 +125,19 @@ export async function addPersonality(
   const name = `mia-${randomUUID().slice(0, 8)}`;
   const p = await prisma.personality.create({
     data: { clientId, name, accounts: { create: accountData(name, opts) } },
-    include: { accounts: { orderBy: { label: 'asc' } } },
+    include: { accounts: { orderBy: { label: 'asc' } }, client: true },
   });
+  // opts.dailyCap is ignored here on purpose: a second personality belongs to a
+  // client that already has a cap, and a per-personality cap is exactly the
+  // thing this change removed. Tests get the client's.
   return {
     id: p.id,
     name: p.name,
-    accounts: p.accounts.map((a) => ({ id: a.id, label: a.label, dailyCap: a.dailyCap })),
+    accounts: p.accounts.map((a) => ({
+      id: a.id,
+      label: a.label,
+      dailyCap: p.client.dailyCapPerAccount,
+    })),
   };
 }
 

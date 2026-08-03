@@ -3,6 +3,7 @@
 export type Account = {
   id: string;
   label: string;
+  /** The client's setting, not this account's. Edited on the Settings tab. */
   dailyCap: number;
   enabled: boolean;
   handedToday: number;
@@ -264,6 +265,12 @@ export interface Session {
   client?: { id: string; name: string };
 }
 
+/** How hard to push every account. One setting for the whole client. */
+export interface Settings {
+  dailyCapPerAccount: number;
+  followPaceSeconds: number;
+}
+
 export const api = {
   /** Who the cookie says we are. Drives whether the login screen shows. */
   session: () => req<Session>('/api/session'),
@@ -303,15 +310,24 @@ export const api = {
   deletePersonality: (id: string) =>
     req<void>(`/api/personalities/${id}`, { method: 'DELETE' }),
 
-  addAccount: (id: string, label: string, dailyCap: number) =>
+  addAccount: (id: string, label: string) =>
     req<Account>(`/api/personalities/${id}/accounts`, {
       method: 'POST',
-      body: JSON.stringify({ label, dailyCap }),
+      body: JSON.stringify({ label }),
     }),
 
-  updateAccount: (id: string, patch: { dailyCap?: number; enabled?: boolean }) =>
+  /** Pause and resume. The cap is a client setting -- see settings/saveSettings. */
+  updateAccount: (id: string, patch: { enabled?: boolean }) =>
     req<Account>(`/api/accounts/${id}`, {
       method: 'PATCH',
+      body: JSON.stringify(patch),
+    }),
+
+  settings: () => req<Settings>('/api/settings'),
+
+  saveSettings: (patch: Partial<Settings>) =>
+    req<Settings & { saved: boolean }>('/api/settings', {
+      method: 'PUT',
       body: JSON.stringify(patch),
     }),
 

@@ -171,7 +171,7 @@ describe('writes scoped to the calling client', () => {
 
     const res = await api.post(`/api/personalities/${b.personalityId}/accounts`, {
       auth: a.auth,
-      body: { label: 'planted_by_a', dailyCap: 999 },
+      body: { label: 'planted_by_a' },
     });
 
     expect(res.status).toBe(404);
@@ -193,20 +193,37 @@ describe('writes scoped to the calling client', () => {
     expect(await prisma.person.count({ where: { personalityId: b.personalityId } })).toBe(7);
   });
 
-  it('PATCH /api/accounts/:id 404s and leaves the cap unchanged', async () => {
+  it('PATCH /api/accounts/:id 404s and leaves the account running', async () => {
     const { a, b } = await twoTenants();
 
     const res = await api.patch(`/api/accounts/${b.accountId}`, {
       auth: a.auth,
-      body: { dailyCap: 1000, enabled: false },
+      body: { enabled: false },
     });
 
     expect(res.status).toBe(404);
     const account = await prisma.account.findUniqueOrThrow({ where: { id: b.accountId } });
-    // Raising another tenant's cap is a rate-limit ban on their Snapchat
-    // account; disabling it stops their work silently.
-    expect(account.dailyCap).toBe(50);
+    // Disabling another tenant's account stops their work silently.
     expect(account.enabled).toBe(true);
+  });
+
+  it('PUT /api/settings cannot reach another tenant, only the caller', async () => {
+    const { a, b } = await twoTenants();
+
+    // There is no id in the path -- the client comes from the key -- so the
+    // isolation to prove is that raising the caller's cap does not move anyone
+    // else's. Another tenant's cap is a rate-limit ban on their Snapchat
+    // accounts, and this is now one write that could reach every account they
+    // own at once.
+    const res = await api.request('PUT', '/api/settings', {
+      auth: a.auth,
+      body: { dailyCapPerAccount: 2000, followPaceSeconds: 0 },
+    });
+
+    expect(res.status).toBe(200);
+    const theirs = await prisma.client.findUniqueOrThrow({ where: { id: b.client.id } });
+    expect(theirs.dailyCapPerAccount).toBe(50);
+    expect(theirs.followPaceSeconds).toBe(2);
   });
 
   it('GET /v1/accounts/:id/targets 404s and claims nothing', async () => {

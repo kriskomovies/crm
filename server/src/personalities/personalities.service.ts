@@ -76,7 +76,9 @@ export class PersonalitiesService {
       this.prisma.personality.findMany({
         where: { clientId },
         include: {
-          client: { select: { name: true, extractionModel: true } },
+          client: {
+            select: { name: true, extractionModel: true, dailyCapPerAccount: true },
+          },
           accounts: { orderBy: { label: 'asc' } },
           _count: { select: { people: true } },
         },
@@ -109,7 +111,12 @@ export class PersonalitiesService {
       model: p.client.extractionModel,
       people: p._count.people,
       accounts: p.accounts.map((a) =>
-        accountView(a, byAccount.get(a.id) ?? {}, today.get(a.id) ?? 0),
+        accountView(
+          a,
+          p.client.dailyCapPerAccount,
+          byAccount.get(a.id) ?? {},
+          today.get(a.id) ?? 0,
+        ),
       ),
     }));
   }
@@ -137,7 +144,7 @@ export class PersonalitiesService {
     personalityId: string,
     input: { handle: string; displayName?: string; machine?: string },
   ): Promise<{ created: boolean; account: AccountView }> {
-    await this.assertExists(clientId, personalityId);
+    const cap = await this.assertExists(clientId, personalityId);
 
     const label = normHandle(input.handle);
     if (!isPlausibleHandle(label)) {
@@ -154,7 +161,7 @@ export class PersonalitiesService {
     const existing = await this.prisma.account.findUnique({
       where: { personalityId_label: { personalityId, label } },
     });
-    if (existing) return { created: false, account: await this.accountWithCounts(existing) };
+    if (existing) return { created: false, account: await this.accountWithCounts(existing, cap) };
 
     // Scoped to this client, and only to its OTHER personalities: the same
     // handle under two clients is two unrelated Snapchat accounts as far as this
@@ -171,9 +178,8 @@ export class PersonalitiesService {
       );
     }
 
-    // dailyCap is left to the column default rather than passed. New accounts
-    // hit Snapchat's add-cooldown around 40 a day, so the conservative default
-    // is the right starting point and the operator raises it in the CRM.
+    // No cap is written: a new account is metered by the client's setting from
+    // its first cycle, which is the point of that setting being one number.
     const data = {
       personalityId,
       label,
@@ -198,7 +204,7 @@ export class PersonalitiesService {
     }
     // Counted after the branches so both answer through one projection: a caller
     // cannot tell whether it won the race from the shape of what it gets back.
-    return { created, account: await this.accountWithCounts(account) };
+    return { created, account: await this.accountWithCounts(account, cap) };
   }
 
   /**
@@ -210,7 +216,7 @@ export class PersonalitiesService {
    * the agent adopts this object and starts its first cycle from it without a
    * second fetch.
    */
-  private async accountWithCounts(a: AccountRow): Promise<AccountView> {
+  private async accountWithCounts(a: AccountRow, dailyCap: number): Promise<AccountView> {
     const [states, handedToday] = await Promise.all([
       this.prisma.assignment.groupBy({
         by: ['state'],
@@ -223,18 +229,20 @@ export class PersonalitiesService {
     ]);
     const counts: Record<string, number> = {};
     for (const s of states) counts[s.state] = s._count._all;
-    return accountView(a, counts, handedToday);
+    return accountView(a, dailyCap, counts, handedToday);
   }
 
-  /** Adjust an account's cap or pause it without deleting its history. */
-  async updateAccount(
-    clientId: string,
-    accountId: string,
-    patch: { dailyCap?: number; enabled?: boolean },
-  ) {
+  /**
+   * Pause an account, or resume it, without deleting its history.
+   *
+   * The cap is no longer here: it is Client.dailyCapPerAccount, one setting for
+   * the whole client. Pausing stays per-account because "this box is broken" is
+   * genuinely about one account, where "how hard do we push" never was.
+   */
+  async updateAccount(clientId: string, accountId: string, patch: { enabled?: boolean }) {
     const account = await this.prisma.account.findFirst({
       where: { id: accountId, personality: { clientId } },
-      select: { id: true },
+      select: { id: true, personality: { select: { client: { select: { dailyCapPerAccount: true } } } } },
     });
     if (!account) throw new NotFoundException('account not found');
     const updated = await this.prisma.account.update({
@@ -244,7 +252,7 @@ export class PersonalitiesService {
     return {
       id: updated.id,
       label: updated.label,
-      dailyCap: updated.dailyCap,
+      dailyCap: account.personality.client.dailyCapPerAccount,
       enabled: updated.enabled,
     };
   }
@@ -269,21 +277,21 @@ export class PersonalitiesService {
     return { id: created.id, name: created.name, clientId: created.clientId, accounts: [] };
   }
 
-  async addAccount(clientId: string, personalityId: string, label: string, dailyCap?: number) {
-    await this.assertExists(clientId, personalityId);
+  async addAccount(clientId: string, personalityId: string, label: string) {
+    const cap = await this.assertExists(clientId, personalityId);
     const exists = await this.prisma.account.findUnique({
       where: { personalityId_label: { personalityId, label } },
       select: { id: true },
     });
     if (exists) throw new BadRequestException(`account "${label}" already exists`);
 
-    const account = await this.prisma.account.create({
-      data: { personalityId, label, ...(dailyCap === undefined ? {} : { dailyCap }) },
-    });
+    const account = await this.prisma.account.create({ data: { personalityId, label } });
     return {
       id: account.id,
       label: account.label,
-      dailyCap: account.dailyCap,
+      // Echoed so a caller learns what this account will actually be metered
+      // at, even though it is the client's setting and not this row's.
+      dailyCap: cap,
       enabled: account.enabled,
     };
   }
@@ -491,19 +499,30 @@ export class PersonalitiesService {
         timesSeen: p.timesSeen,
         state: p.assignment?.state ?? null,
         reason: p.assignment?.reason ?? null,
+        // Why the machine ended it that way. `reason` says why we FORWARDED
+        // them; this says what happened when someone tried. Two different
+        // questions, and only the first was answerable from the UI.
+        note: p.assignment?.note ?? null,
         account: p.assignment?.account.label ?? null,
       })),
       nextCursor,
     };
   }
 
-  /** 404 rather than 403 for someone else's personality: the id is the secret. */
-  private async assertExists(clientId: string, personalityId: string): Promise<void> {
+  /**
+   * 404 rather than 403 for someone else's personality: the id is the secret.
+   *
+   * Returns the owning client's per-account cap, because every caller that
+   * needs to prove the personality exists is also about to describe one of its
+   * accounts, and the cap is one join away on a row already being read.
+   */
+  private async assertExists(clientId: string, personalityId: string): Promise<number> {
     const found = await this.prisma.personality.findFirst({
       where: { id: personalityId, clientId },
-      select: { id: true },
+      select: { client: { select: { dailyCapPerAccount: true } } },
     });
     if (!found) throw new NotFoundException('personality not found');
+    return found.client.dailyCapPerAccount;
   }
 }
 
@@ -523,9 +542,11 @@ function assignmentState(raw: string): AssignmentState {
 }
 
 /** The columns every account projection needs. Less than a full Account row. */
-type AccountRow = { id: string; label: string; dailyCap: number; enabled: boolean };
+type AccountRow = { id: string; label: string; enabled: boolean };
 
 export interface AccountView extends AccountRow {
+  /** The client's setting, echoed per account because that is what meters it. */
+  dailyCap: number;
   handedToday: number;
   remainingToday: number;
   queued: number;
@@ -544,16 +565,17 @@ export interface AccountView extends AccountRow {
  */
 function accountView(
   a: AccountRow,
+  dailyCap: number,
   counts: Record<string, number>,
   handedToday: number,
 ): AccountView {
   return {
     id: a.id,
     label: a.label,
-    dailyCap: a.dailyCap,
+    dailyCap,
     enabled: a.enabled,
     handedToday,
-    remainingToday: Math.max(0, a.dailyCap - handedToday),
+    remainingToday: Math.max(0, dailyCap - handedToday),
     queued: counts.queued ?? 0,
     handedOut: counts.handed_out ?? 0,
     followed: counts.followed ?? 0,

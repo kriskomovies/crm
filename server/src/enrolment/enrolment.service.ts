@@ -140,21 +140,37 @@ export class EnrolmentService {
     // Hand back everything the machine needs to start working, so its config
     // file holds no identity at all: the server is the source of truth for
     // which accounts exist and which personality they belong to.
-    const personalities = await this.prisma.personality.findMany({
-      where: { clientId: client.id },
-      select: {
-        id: true,
-        name: true,
-        accounts: {
-          where: { enabled: true },
-          select: { id: true, label: true, dailyCap: true },
-          orderBy: { label: 'asc' },
+    const [personalities, settings] = await Promise.all([
+      this.prisma.personality.findMany({
+        where: { clientId: client.id },
+        select: {
+          id: true,
+          name: true,
+          accounts: {
+            where: { enabled: true },
+            select: { id: true, label: true },
+            orderBy: { label: 'asc' },
+          },
         },
-      },
-      orderBy: { name: 'asc' },
-    });
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.client.findUniqueOrThrow({
+        where: { id: client.id },
+        select: { dailyCapPerAccount: true, followPaceSeconds: true },
+      }),
+    ]);
 
-    return { apiKey: key, client: { id: client.id, name: client.name }, personalities };
+    // dailyCap left the account rows because it is one setting for the whole
+    // client now. Sent alongside them so a machine still learns its budget from
+    // this one reply, and paceSeconds with it -- a box enrolling for the first
+    // time can pace correctly before it has ever claimed anything.
+    return {
+      apiKey: key,
+      client: { id: client.id, name: client.name },
+      personalities,
+      dailyCap: settings.dailyCapPerAccount,
+      paceSeconds: settings.followPaceSeconds,
+    };
   }
 
   /**

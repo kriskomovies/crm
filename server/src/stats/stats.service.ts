@@ -85,7 +85,11 @@ export class StatsService {
       select: {
         id: true,
         name: true,
-        accounts: { select: { id: true, label: true, dailyCap: true }, orderBy: { label: 'asc' } },
+        accounts: { select: { id: true, label: true }, orderBy: { label: 'asc' } },
+        // One number for every account this client runs -- see
+        // Client.dailyCapPerAccount. Read here so byAccount can still report
+        // what each account is metered at without a second query.
+        client: { select: { dailyCapPerAccount: true } },
       },
       orderBy: { name: 'asc' },
     });
@@ -295,7 +299,7 @@ export class StatsService {
           id: a.id,
           label: a.label,
           personality: p.name,
-          dailyCap: a.dailyCap,
+          dailyCap: p.client.dailyCapPerAccount,
           handedToday: handedByAccount.get(a.id) ?? 0,
           followed,
           failed,

@@ -80,7 +80,14 @@ export async function main(): Promise<void> {
   let apiKey: string | null = null;
 
   if (client) {
-    console.log(`client "${clientName}" already exists; adding to it. Key unchanged.`);
+    // --cap deliberately does NOT apply here. It carries a default, so a re-run
+    // that only meant to add an account would silently stamp 240 over whatever
+    // the operator had set in the CRM. An existing client's cap is changed on
+    // the Settings screen, which is the one place that owns it.
+    console.log(
+      `client "${clientName}" already exists; adding to it. Key and cap unchanged ` +
+        `(cap ${client.dailyCapPerAccount}/day/account -- change it in the CRM).`,
+    );
   } else {
     // --key registers a key you already have rather than inventing one. The
     // deploy needs this: bootstrap writes a random OPERATOR_API_KEY into .env
@@ -93,6 +100,10 @@ export async function main(): Promise<void> {
         name: clientName,
         apiKeyHash: hashApiKey(apiKey),
         extractionModel: model,
+        // One cap for every account this client will ever run. Per-account caps
+        // are gone: what the cap protects against is Snapchat rate-limiting the
+        // account doing the following, which is not a per-account property.
+        dailyCapPerAccount: cap,
         // Without a rule NOTHING is forwarded: filter falls through, every
         // extracted person sits unassigned, and a first end-to-end test looks
         // exactly like a broken pipeline.
@@ -121,8 +132,8 @@ export async function main(): Promise<void> {
     accounts.push(
       await prisma.account.upsert({
         where: { personalityId_label: { personalityId: personality.id, label } },
-        update: { dailyCap: cap },
-        create: { personalityId: personality.id, label, dailyCap: cap, enabled: true },
+        update: {},
+        create: { personalityId: personality.id, label, enabled: true },
       }),
     );
   }
@@ -133,7 +144,7 @@ export async function main(): Promise<void> {
   console.log(`model        ${model}`);
   console.log(`personality  ${personality.name}  (${personality.id})`);
   for (const a of accounts) {
-    console.log(`  account    ${a.label}  cap ${a.dailyCap}/day  (${a.id})`);
+    console.log(`  account    ${a.label}  cap ${cap}/day  (${a.id})`);
   }
 
   if (apiKey) {

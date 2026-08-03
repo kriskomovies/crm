@@ -157,14 +157,17 @@ describe('POST /api/personalities', () => {
 });
 
 describe('POST /api/personalities/:id/accounts', () => {
-  it('rejects a dailyCap over 1000', async () => {
+  it('refuses a per-account dailyCap outright, rather than ignoring it', async () => {
     const c = await ctx();
+    // The cap is one client-wide setting now. forbidNonWhitelisted turning this
+    // into a 400 is the point: accepting and silently dropping it would let an
+    // operator believe they had capped one account differently.
     expectRejected(
       await api.post(`/api/personalities/${c.personalityId}/accounts`, {
         auth: c.auth,
         body: { label: 'snap_99', dailyCap: 1001 },
       }),
-      'dailyCap must not be greater than 1000',
+      'property dailyCap should not exist',
     );
   });
 
@@ -310,10 +313,10 @@ describe('POST /api/personalities/:id/targets', () => {
 
 describe('PATCH /api/accounts/:id', () => {
   it.each([
-    ['a negative dailyCap', { dailyCap: -1 }, 'dailyCap must not be less than 0'],
-    ['a dailyCap over 1000', { dailyCap: 1001 }, 'dailyCap must not be greater than 1000'],
-    ['a fractional dailyCap', { dailyCap: 1.5 }, 'dailyCap must be an integer number'],
-    ['a dailyCap sent as a string', { dailyCap: '50' }, 'dailyCap must be an integer number'],
+    // dailyCap is no longer a property of an account, so it is rejected as an
+    // unknown one. That is the whole contract of this route now: pause and
+    // resume, nothing else.
+    ['a dailyCap', { dailyCap: 100 }, 'property dailyCap should not exist'],
     ['a non-boolean enabled', { enabled: 'yes' }, 'enabled must be a boolean value'],
     ['an unknown property', { label: 'renamed' }, 'property label should not exist'],
   ])('rejects %s', async (_label, body, blames) => {
@@ -321,22 +324,71 @@ describe('PATCH /api/accounts/:id', () => {
     expectRejected(await api.patch(`/api/accounts/${c.accountId}`, { auth: c.auth, body }), blames);
     // Nothing may have been written on the way to the 400.
     const account = await prisma.account.findUniqueOrThrow({ where: { id: c.accountId } });
-    expect(account.dailyCap).toBe(50);
     expect(account.enabled).toBe(true);
-  });
-
-  it.each([0, 1000])('accepts the boundary dailyCap %i', async (dailyCap) => {
-    const c = await ctx();
-    const res = await api.patch(`/api/accounts/${c.accountId}`, { auth: c.auth, body: { dailyCap } });
-    expect(res.status).toBe(200);
-    expect(res.body.dailyCap).toBe(dailyCap);
   });
 
   it('treats an empty patch as a no-op rather than an error', async () => {
     const c = await ctx();
     const res = await api.patch(`/api/accounts/${c.accountId}`, { auth: c.auth, body: {} });
     expect(res.status).toBe(200);
+    // dailyCap is still reported -- it is what meters this account -- it just
+    // comes from the client and cannot be set from here.
     expect(res.body).toMatchObject({ id: c.accountId, dailyCap: 50, enabled: true });
+  });
+});
+
+describe('PUT /api/settings', () => {
+  it.each([
+    ['a negative cap', { dailyCapPerAccount: -1 }, 'dailyCapPerAccount must not be less than 0'],
+    [
+      'a cap over 2000',
+      { dailyCapPerAccount: 2001 },
+      'dailyCapPerAccount must not be greater than 2000',
+    ],
+    [
+      'a fractional cap',
+      { dailyCapPerAccount: 1.5 },
+      'dailyCapPerAccount must be an integer number',
+    ],
+    [
+      'a cap sent as a string',
+      { dailyCapPerAccount: '50' },
+      'dailyCapPerAccount must be an integer number',
+    ],
+    ['a negative pace', { followPaceSeconds: -1 }, 'followPaceSeconds must not be less than 0'],
+    [
+      'a pace over an hour',
+      { followPaceSeconds: 3601 },
+      'followPaceSeconds must not be greater than 3600',
+    ],
+    ['an unknown property', { dailyCap: 10 }, 'property dailyCap should not exist'],
+  ])('rejects %s', async (_label, body, blames) => {
+    const c = await ctx();
+    expectRejected(await api.request('PUT', '/api/settings', { auth: c.auth, body }), blames);
+    const client = await prisma.client.findUniqueOrThrow({ where: { id: c.client.id } });
+    expect(client.dailyCapPerAccount).toBe(50);
+  });
+
+  it.each([0, 2000])('accepts the boundary cap %i', async (dailyCapPerAccount) => {
+    const c = await ctx();
+    const res = await api.request('PUT', '/api/settings', {
+      auth: c.auth,
+      body: { dailyCapPerAccount },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.dailyCapPerAccount).toBe(dailyCapPerAccount);
+  });
+
+  it('takes one field without disturbing the other', async () => {
+    const c = await ctx();
+    const res = await api.request('PUT', '/api/settings', {
+      auth: c.auth,
+      body: { followPaceSeconds: 9 },
+    });
+    expect(res.status).toBe(200);
+    // A screen that edits one number must not have to restate the other and
+    // risk stamping a stale value over someone else's edit.
+    expect(res.body).toMatchObject({ followPaceSeconds: 9, dailyCapPerAccount: 50 });
   });
 });
 
@@ -482,7 +534,13 @@ describe('the limit query param', () => {
   it('caps the metered claim at 100 however large a limit is asked for', async () => {
     const c = await ctx();
     await queueTargets(c.personalityId, c.accountId, 120);
-    await api.patch(`/api/accounts/${c.accountId}`, { auth: c.auth, body: { dailyCap: 1000 } });
+    // The cap has to be lifted out of the way first, or this measures the cap
+    // rather than the limit clamp. It is a client setting now, not a patch on
+    // the account.
+    await api.request('PUT', '/api/settings', {
+      auth: c.auth,
+      body: { dailyCapPerAccount: 1000 },
+    });
 
     const res = await api.get(`/v1/accounts/${c.accountId}/targets?limit=99999`, { auth: c.auth });
 

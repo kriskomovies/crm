@@ -20,6 +20,7 @@ import { ExtractProcessor } from './pipeline/extract.processor';
 import { PipelineService } from './pipeline/pipeline.service';
 import { PrismaService } from './prisma/prisma.service';
 import { RetentionService } from './retention/retention.service';
+import { SettingsController } from './settings/settings.controller';
 import { SheetsController } from './sheets/sheets.controller';
 import { StatsController } from './stats/stats.controller';
 import { StatsService } from './stats/stats.service';
@@ -85,6 +86,7 @@ export class CoreModule {}
     TargetsController,
     PersonalityLedgerController,
     PersonalitiesController, AccountsController,
+    SettingsController,
     StatsController,
     CrmController,
     RulesController,

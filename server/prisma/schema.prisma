@@ -49,6 +49,28 @@ model Client {
   /// in a day, so this is enforced from day one, not "later".
   monthlyBudgetUsd Decimal @default(100) @db.Decimal(10, 2)
 
+  /// Targets handed to EACH of this client's accounts per day.
+  ///
+  /// One number for the whole client rather than a column on Account. What the
+  /// cap protects against is Snapchat rate-limiting the account doing the
+  /// following, and that threshold is a property of Snapchat and of how old the
+  /// account is -- not of which account it happens to be. Twenty accounts each
+  /// carrying their own copy of the same number meant twenty places to change
+  /// when the answer moved, and nineteen chances to miss one.
+  ///
+  /// It is a PER-ACCOUNT cap, not a pool: each account gets this many, so
+  /// adding an account adds throughput rather than dividing it.
+  dailyCapPerAccount Int @default(240)
+
+  /// Seconds a machine waits between follows, before its own jitter.
+  ///
+  /// Served to agents rather than acted on here -- this server hands out
+  /// handles and never follows anything. It lives with the cap because the two
+  /// are one decision: how hard to push an account. Changing it in the CRM
+  /// beats editing a config file on every emulator box, which is what it
+  /// replaces.
+  followPaceSeconds Int @default(2)
+
   /// While this is in the future, an unauthenticated machine may POST /v1/enrol
   /// and be issued its own key. It is how a box is set up by typing only an
   /// address: the operator opens a short window in the CRM instead of copying a
@@ -128,9 +150,9 @@ model Account {
   id            String   @id @default(uuid())
   personalityId String
   label         String
-  /// Targets handed out per day. Protects the account from rate-limiting; the
-  /// server meters handout rather than trusting the client to pace itself.
-  dailyCap      Int      @default(50)
+  /// The cap that meters this account's handout is Client.dailyCapPerAccount.
+  /// It used to live here, one copy per account, which made "how hard do we
+  /// push" a setting you had to remember to apply in twenty places.
   enabled       Boolean  @default(true)
   createdAt     DateTime @default(now())
 

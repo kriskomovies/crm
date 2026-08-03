@@ -39,13 +39,42 @@ describe('metered claim', () => {
     ).toBe(7);
   });
 
-  it('claims the oldest queued rows first', async () => {
+  /**
+   * NEWEST first, and this reversed a deliberate earlier decision.
+   *
+   * A handle can only be followed while that person is still on the emulator's
+   * Quick Add roster, and the roster is re-rolled every time Snapchat restarts
+   * -- which the agent does after each batch, because it is the only thing that
+   * produces new people. A row from an older sheet is therefore not stale, it
+   * is unreachable.
+   *
+   * Measured on a live account at cap 50: oldest-first spent 18 of the 50 on
+   * orphans from the previous sheet, every one of which missed, leaving 32
+   * follows for a full day's budget.
+   */
+  it('claims the newest queued rows first, because older ones are off the device', async () => {
     const client = await makeClient({ accounts: 1, dailyCap: 50 });
     const account = client.personality.accounts[0];
     const handles = await queueTargets(client.personality.id, account.id, 10);
 
     const claimed = await targets.claim(account.id, 4);
-    expect(claimed.map((c) => c.handle)).toEqual(handles.slice(0, 4));
+    expect(claimed.map((c) => c.handle)).toEqual(handles.slice(-4).reverse());
+  });
+
+  it('prefers a fresh sheet over what an earlier one left behind', async () => {
+    // The real shape of the bug: claim less than the first sheet produced, add
+    // a second sheet, claim again. The second claim must draw on the new rows
+    // rather than working through the orphans of the first.
+    const client = await makeClient({ accounts: 1, dailyCap: 50 });
+    const account = client.personality.accounts[0];
+    await queueTargets(client.personality.id, account.id, 10, 'older');
+    await targets.claim(account.id, 4);
+
+    const fresh = await queueTargets(client.personality.id, account.id, 10, 'newer');
+    const second = await targets.claim(account.id, 5);
+
+    expect(second.map((c) => c.handle)).toEqual(fresh.slice(-5).reverse());
+    expect(second.every((c) => c.handle.startsWith('newer'))).toBe(true);
   });
 
   it('hands out nothing for a disabled account', async () => {

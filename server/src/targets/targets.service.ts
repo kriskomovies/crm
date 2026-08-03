@@ -44,10 +44,27 @@ export class TargetsService {
   }
 
   async remainingToday(accountId: string): Promise<number> {
-    const account = await this.prisma.account.findUnique({ where: { id: accountId } });
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: {
+        enabled: true,
+        personality: { select: { client: { select: { dailyCapPerAccount: true } } } },
+      },
+    });
     if (!account) throw new NotFoundException('account not found');
     if (!account.enabled) return 0;
-    return Math.max(0, account.dailyCap - (await this.handedOutToday(accountId)));
+    const cap = account.personality.client.dailyCapPerAccount;
+    return Math.max(0, cap - (await this.handedOutToday(accountId)));
+  }
+
+  /** Seconds an agent waits between follows. Served, never acted on here. */
+  async paceSeconds(accountId: string): Promise<number> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { personality: { select: { client: { select: { followPaceSeconds: true } } } } },
+    });
+    if (!account) throw new NotFoundException('account not found');
+    return account.personality.client.followPaceSeconds;
   }
 
   /**
@@ -74,8 +91,17 @@ export class TargetsService {
   async claim(accountId: string, limit: number): Promise<TargetRow[]> {
     const since = utcLiteral(startOfToday());
     return this.prisma.$transaction(async (tx) => {
+      // FOR UPDATE OF a, not a bare FOR UPDATE: the cap now comes from the
+      // client row, and locking that too would serialise the claims of every
+      // account the client owns against each other. The lock this needs is on
+      // the one account whose budget is about to be counted and spent.
       const [account] = await tx.$queryRaw<{ dailyCap: number; enabled: boolean }[]>`
-        SELECT "dailyCap", enabled FROM accounts WHERE id = ${accountId} FOR UPDATE
+        SELECT c."dailyCapPerAccount" AS "dailyCap", a.enabled
+        FROM accounts a
+        JOIN personalities p ON p.id = a."personalityId"
+        JOIN clients c ON c.id = p."clientId"
+        WHERE a.id = ${accountId}
+        FOR UPDATE OF a
       `;
       if (!account) throw new NotFoundException('account not found');
       if (!account.enabled) return [];
@@ -110,7 +136,32 @@ export class TargetsService {
           -- and the daily cap -- the one thing protecting the Snapchat account
           -- from rate limiting -- never engages. It waits for tomorrow instead.
           AND (a."handedOutAt" IS NULL OR a."handedOutAt" < ${since}::timestamp)
-        ORDER BY a."createdAt" ASC
+        -- NEWEST FIRST, and this is the whole efficiency of the product.
+        --
+        -- A handle can only be followed while the person is still on the
+        -- emulator's Quick Add roster, and that roster is re-rolled every time
+        -- Snapchat restarts -- which the agent does deliberately after each
+        -- batch, because it is the only thing that produces new people. So a
+        -- row queued from an older sheet is not merely stale, it is gone from
+        -- the device and cannot be followed at all.
+        --
+        -- Measured on a live account at cap 50: oldest-first spent 18 of the
+        -- 50 on orphans from the previous sheet, every one of which missed, for
+        -- 32 follows. It also took 31 minutes instead of 11, because a miss
+        -- scans twelve pages and rewinds before giving up.
+        --
+        -- Nothing is stranded that the old order preserved: a skip is terminal
+        -- (see report()), so those rows were never coming back either way. This
+        -- only stops metered cap being spent on rows already guaranteed to
+        -- fail. The consequence to know about is that a handle left behind by a
+        -- burst of fresh sheets may never be handed out -- which is correct,
+        -- and makes the queued count a count of the ledger rather than of work
+        -- that is still reachable.
+        --
+        -- id breaks the tie: allocate() writes a whole sheet in one createMany,
+        -- so every row from one sheet shares a createdAt, and the sort has to
+        -- be total or "the newest 25" is not a repeatable set.
+        ORDER BY a."createdAt" DESC, a.id DESC
         LIMIT ${take}
         FOR UPDATE SKIP LOCKED
       )
@@ -203,6 +254,13 @@ export class TargetsService {
           select: {
             state: true,
             handedOutAt: true,
+            // What the machine said when it reported back -- "no row read as
+            // 'x' in 12 page(s) of the current Quick Add roster" and the like.
+            // Written by report() since the beginning and selected by nothing,
+            // so the single most diagnostic string in the system could only be
+            // read out of psql. A skip with no reason is indistinguishable from
+            // a skip whose reason nobody wrote down.
+            note: true,
             account: { select: { id: true, label: true } },
           },
         },

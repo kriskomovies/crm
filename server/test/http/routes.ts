@@ -115,6 +115,15 @@ export const ROUTES: RouteSpec[] = [
     body: { dailyCap: 10 },
   },
 
+  // SettingsController -- how hard to push every account, one setting per client
+  { method: 'GET', path: '/api/settings', sample: '/api/settings' },
+  {
+    method: 'PUT',
+    path: '/api/settings',
+    sample: '/api/settings',
+    body: { dailyCapPerAccount: 240, followPaceSeconds: 2 },
+  },
+
   // StatsController
   { method: 'GET', path: '/api/stats', sample: '/api/stats' },
 

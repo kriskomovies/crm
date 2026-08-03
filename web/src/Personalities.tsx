@@ -1,25 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 
 import { api, type Account, type Personality } from './api';
 import { CapBar } from './ui';
-
-const CAP_MIN = 0;
-const CAP_MAX = 1000;
-
-/**
- * A daily cap typed by an operator.
- *
- * Number('') is 0, not NaN, so a cleared field reads as a perfectly valid cap
- * of zero -- and a cap of zero is an account that will never be handed another
- * target. The field is therefore held as text and only committed once it parses
- * to a real number; anything else reverts to what the server already has.
- */
-function parseCap(draft: string): number | null {
-  if (draft.trim() === '') return null;
-  const n = Number(draft);
-  if (!Number.isFinite(n)) return null;
-  return Math.min(CAP_MAX, Math.max(CAP_MIN, Math.round(n)));
-}
 
 /**
  * The main screen: every personality, its accounts, and how much of each
@@ -96,20 +78,16 @@ function PersonalityCard({
 }) {
   const [adding, setAdding] = useState(false);
   const [label, setLabel] = useState('');
-  const [cap, setCap] = useState('25');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  const dailyCap = parseCap(cap);
-
   const addAccount = async () => {
-    if (!label.trim() || dailyCap === null || busy) return;
+    if (!label.trim() || busy) return;
     setBusy(true);
     setErr(null);
     try {
-      await api.addAccount(p.id, label.trim(), dailyCap);
+      await api.addAccount(p.id, label.trim());
       setLabel('');
-      setCap('25');
       setAdding(false);
       onChanged();
     } catch (e) {
@@ -148,25 +126,17 @@ function PersonalityCard({
               if (e.key === 'Enter') void addAccount();
             }}
           />
-          <label className="cap-input">
-            daily cap
-            <input
-              type="number"
-              className="mini"
-              min={CAP_MIN}
-              max={CAP_MAX}
-              value={cap}
-              onChange={(e) => setCap(e.target.value)}
-            />
-          </label>
           <button
             className="primary"
             onClick={() => void addAccount()}
-            disabled={busy || !label.trim() || dailyCap === null}
+            disabled={busy || !label.trim()}
           >
             Add
           </button>
           {err && <span className="error">{err}</span>}
+          <span className="muted small">
+            metered at the client&apos;s cap — change it on Settings
+          </span>
         </div>
       )}
 
@@ -201,43 +171,23 @@ function PersonalityCard({
 }
 
 function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
-  const [draft, setDraft] = useState(String(a.dailyCap));
-  const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // The row is not remounted by the 5s poll, so its own copy of the cap would
-  // otherwise sit there contradicting the server for as long as the tab is
-  // open. Adopt the server's value, but never over what is being typed.
-  useEffect(() => {
-    if (!editing) setDraft(String(a.dailyCap));
-  }, [a.dailyCap, editing]);
-
-  const save = async (patch: { dailyCap?: number; enabled?: boolean }) => {
+  // Pause and resume is all that is left here. The cap moved to Settings: it is
+  // one number for the whole client, and twenty rows each offering to edit it
+  // was twenty places to set it and nineteen chances to leave one behind.
+  const save = async (patch: { enabled?: boolean }) => {
     setSaving(true);
     setErr(null);
     try {
       await api.updateAccount(a.id, patch);
       onChanged();
     } catch (e) {
-      // Leaving the rejected number in the box would show a cap the account
-      // does not have, on the one control that decides how hard it gets pushed.
       setErr(e instanceof Error ? e.message : String(e));
-      setDraft(String(a.dailyCap));
     } finally {
       setSaving(false);
     }
-  };
-
-  const commit = () => {
-    setEditing(false);
-    const next = parseCap(draft);
-    if (next === null) {
-      setDraft(String(a.dailyCap));
-      return;
-    }
-    setDraft(String(next));
-    if (next !== a.dailyCap) void save({ dailyCap: next });
   };
 
   return (
@@ -259,22 +209,11 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
       </td>
       <td data-label="" className="actions">
         {err && <span className="error small">{err}</span>}
-        <input
-          type="number"
-          className="mini"
-          min={CAP_MIN}
-          max={CAP_MAX}
-          value={draft}
+        <button
+          className="link"
           disabled={saving}
-          onFocus={() => setEditing(true)}
-          onChange={(e) => setDraft(e.target.value)}
-          onBlur={commit}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') e.currentTarget.blur();
-          }}
-          title="daily cap"
-        />
-        <button className="link" onClick={() => void save({ enabled: !a.enabled })}>
+          onClick={() => void save({ enabled: !a.enabled })}
+        >
           {a.enabled ? 'pause' : 'resume'}
         </button>
       </td>

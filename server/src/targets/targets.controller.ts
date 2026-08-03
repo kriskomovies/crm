@@ -95,6 +95,11 @@ export class TargetsController {
       // Told explicitly so the client can back off instead of hot-polling an
       // exhausted cap.
       remainingToday: await this.targets.remainingToday(accountId),
+      // The operator's pacing setting, delivered where it is about to be used.
+      // Every cycle calls this before following, so the machine cannot act on a
+      // number older than the batch in front of it -- which is the whole reason
+      // this beats a value in a config file on twenty boxes.
+      paceSeconds: await this.targets.paceSeconds(accountId),
     };
   }
 

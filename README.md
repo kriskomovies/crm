@@ -62,7 +62,7 @@ machine.
 cd server && npx vitest run
 ```
 
-416 across four projects — 407 on a fresh clone, since the nine sheet-driven
+441 across four projects — 432 on a fresh clone, since the nine sheet-driven
 e2e tests skip until you supply the fixture above. `unit` (pure functions),
 `int` (real Postgres —
 per-personality scoping and the concurrent metered claim), `http` (auth, tenant
@@ -161,6 +161,60 @@ including the one the agent parses.
 The contract is `CRM-CHANGES.md` in the snap-automation repo; the tests that
 hold us to it are `test/http/registration.http.spec.ts` and
 `test/registration.int.spec.ts`.
+
+## Newest first — the handout order is the efficiency
+
+The claim hands out the **most recently queued** rows, not the oldest.
+
+A handle can only be followed while that person is still on the emulator's Quick
+Add roster, and that roster is re-rolled every time Snapchat restarts — which the
+agent does deliberately after each batch, because it is the only thing that
+produces new people. A row queued from an older sheet is therefore not stale, it
+is **gone from the device** and cannot be followed at all.
+
+Measured on a live account at cap 50: oldest-first spent 18 of the 50 on orphans
+from the previous sheet, every one of which missed, leaving 32 follows for a full
+day's budget. It also took 31 minutes rather than 11, because a miss scans twelve
+pages and rewinds before giving up.
+
+Nothing is stranded that the old order preserved — a `skipped` report is terminal,
+so those rows were never coming back either way. The consequence to know is that
+a handle left behind by a run of fresh sheets may never be handed out, which makes
+`queued` a count of the ledger rather than of work that is still reachable.
+
+`Assignment.note` — what the machine said when it reported back, e.g. *"no row
+read as 'x' in 12 page(s) of the current Quick Add roster"* — has been written
+since the beginning and selected by nothing. It is now returned by the ledger and
+the targets list, because a skip with no reason is indistinguishable from a skip
+whose reason nobody wrote down.
+
+## How hard to push an account
+
+Two numbers, one screen (**Settings**), one setting each for the whole client:
+
+```prisma
+Client.dailyCapPerAccount  Int @default(240)   -- targets handed to EACH account per day
+Client.followPaceSeconds   Int @default(2)     -- seconds a machine waits between follows
+```
+
+`dailyCapPerAccount` replaces the old `Account.dailyCap` column. It is still a
+**per-account** cap — each account gets that many, so adding an account adds
+throughput rather than dividing it — it is only the *setting* that is shared.
+What the cap protects against is Snapchat rate-limiting the account doing the
+following, and that threshold is a property of Snapchat and of how old the account
+is, not of which account it happens to be. Twenty accounts each carrying their own
+copy of the number meant twenty places to change it and nineteen chances to miss
+one.
+
+The asymmetry worth knowing: **the cap is enforced, the pace is only served.**
+`TargetsService.claim` meters against the cap inside its transaction, so a client
+that ignores it still gets nothing. The pace rides out on the claim reply as
+`paceSeconds` and a machine has to honour it — one running an older build keeps
+using `follow_pace_seconds` from its own config file.
+
+A young account hits Snapchat's add-cooldown at roughly 40 adds/day in testing.
+Both defaults are well above that on purpose; they are the rate limit that keeps
+an account alive, not a throughput knob.
 
 ## Forward or drop — there is no review
 

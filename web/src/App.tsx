@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, type Personality } from './api';
 import { Login } from './Login';
 import { Personalities } from './Personalities';
+import { Settings } from './Settings';
 import { Sheets } from './Sheets';
 import { Stats } from './Stats';
 import { Targeting } from './Targeting';
@@ -12,7 +13,8 @@ type View =
   | { tab: 'personalities'; open: Personality | null }
   | { tab: 'stats' }
   | { tab: 'sheets' }
-  | { tab: 'targeting' };
+  | { tab: 'targeting' }
+  | { tab: 'settings' };
 
 export default function App() {
   // null = not asked yet. Rendering the app or the login before the answer
@@ -108,6 +110,12 @@ export default function App() {
           >
             Targeting
           </button>
+          <button
+            className={view.tab === 'settings' ? 'on' : ''}
+            onClick={() => setView({ tab: 'settings' })}
+          >
+            Settings
+          </button>
         </nav>
       </header>
 
@@ -120,6 +128,8 @@ export default function App() {
         {view.tab === 'sheets' && <Sheets />}
 
         {view.tab === 'targeting' && <Targeting />}
+
+        {view.tab === 'settings' && <Settings />}
 
         {view.tab === 'personalities' &&
           data &&

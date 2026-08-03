@@ -142,14 +142,18 @@ describe('every list endpoint answers in the {items, nextCursor} envelope', () =
 });
 
 describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
-  it('answers {targets, remainingToday} and nothing else', async () => {
+  it('answers {targets, remainingToday, paceSeconds} and nothing else', async () => {
     const c = await ctx();
     await queueTargets(c.personalityId, c.accountId, 3);
 
     const res = await api.get(`/v1/accounts/${c.accountId}/targets?limit=2`, { auth: c.auth });
 
     expect(res.status).toBe(200);
-    expect(Object.keys(res.body).sort()).toEqual(['remainingToday', 'targets']);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'paceSeconds',
+      'remainingToday',
+      'targets',
+    ]);
     // Explicitly NOT the envelope. Pinned so that a sweep to "make every
     // endpoint consistent" fails here instead of quietly dropping
     // remainingToday, which is the only reason a capped client knows to stop
@@ -158,6 +162,9 @@ describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
     expect(res.body.nextCursor).toBeUndefined();
     expect(res.body.targets).toHaveLength(2);
     expect(typeof res.body.remainingToday).toBe('number');
+    // Delivered with the batch it applies to, so a machine cannot pace on a
+    // number older than the work in front of it.
+    expect(typeof res.body.paceSeconds).toBe('number');
   });
 
   it('reports each target with the fields an emulator needs', async () => {
@@ -307,11 +314,23 @@ describe('the non-list endpoints', () => {
     const c = await ctx();
     const res = await api.patch(`/api/accounts/${c.accountId}`, {
       auth: c.auth,
-      body: { dailyCap: 25, enabled: false },
+      body: { enabled: false },
     });
     expect(res.status).toBe(200);
+    // dailyCap is still in the shape and still describes this account -- it is
+    // the client's setting, reported rather than stored here.
     expect(Object.keys(res.body).sort()).toEqual(['dailyCap', 'enabled', 'id', 'label']);
-    expect(res.body).toMatchObject({ dailyCap: 25, enabled: false });
+    expect(res.body).toMatchObject({ dailyCap: 50, enabled: false });
+  });
+
+  it('GET /api/settings answers the two pacing numbers and nothing else', async () => {
+    const c = await ctx();
+    const res = await api.get('/api/settings', { auth: c.auth });
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'dailyCapPerAccount',
+      'followPaceSeconds',
+    ]);
   });
 
   it('DELETE /api/personalities/:id answers 204 with no body', async () => {
