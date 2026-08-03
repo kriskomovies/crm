@@ -134,6 +134,17 @@ model Account {
   enabled       Boolean  @default(true)
   createdAt     DateTime @default(now())
 
+  /// Context from a machine that registered itself: the display name shown next
+  /// to the handle on the emulator's profile screen, and the hostname that read
+  /// it. Both null for an account an operator typed in.
+  ///
+  /// Operator context only. The label is the identity -- these two exist so that
+  /// "who is this account and which box is driving it" is answerable from the
+  /// CRM, since an account created by POST /v1/personalities/:id/accounts was
+  /// never named by a human.
+  displayName   String?
+  machine       String?
+
   personality Personality  @relation(fields: [personalityId], references: [id], onDelete: Cascade)
   sheets      Sheet[]
   assignments Assignment[]

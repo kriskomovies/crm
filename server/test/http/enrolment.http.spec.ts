@@ -101,6 +101,24 @@ describe('POST /v1/enrol inside a window', () => {
     expect(row.hash).not.toContain(res.body.apiKey);
   });
 
+  it('includes personalities that have no accounts yet', async () => {
+    const c = await makeClient({ accounts: 0 });
+    await prisma.client.update({
+      where: { id: c.id },
+      data: { enrolOpenUntil: new Date(Date.now() + 60_000) },
+    });
+
+    const res = await enrol();
+
+    // An account-less personality is precisely what the machine selects: it
+    // reads the handle off its own emulator and registers the account itself.
+    // Filtering empty personalities out of this reply would leave a freshly
+    // enrolled box with nothing to pick and no way to start.
+    const mine = res.body.personalities.find((p: any) => p.id === c.personality.id);
+    expect(mine).toBeDefined();
+    expect(mine.accounts).toEqual([]);
+  });
+
   it('the issued key actually works on a guarded route', async () => {
     const c = await makeClient();
     await prisma.client.update({

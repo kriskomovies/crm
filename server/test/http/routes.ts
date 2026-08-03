@@ -66,6 +66,15 @@ export const ROUTES: RouteSpec[] = [
     path: '/v1/personalities/:personalityId/ledger',
     sample: `/v1/personalities/${ABSENT}/ledger`,
   },
+  // A machine creating its own account from the handle on its emulator's
+  // screen. Guarded like every other /v1 route -- it is the operator's
+  // POST /api/personalities/:id/accounts that it must not be confused with.
+  {
+    method: 'POST',
+    path: '/v1/personalities/:personalityId/accounts',
+    sample: `/v1/personalities/${ABSENT}/accounts`,
+    body: { handle: 'authmatrix' },
+  },
 
   // PersonalitiesController
   { method: 'GET', path: '/api/personalities', sample: '/api/personalities' },

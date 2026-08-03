@@ -62,7 +62,7 @@ machine.
 cd server && npx vitest run
 ```
 
-390 across four projects — 381 on a fresh clone, since the nine sheet-driven
+416 across four projects — 407 on a fresh clone, since the nine sheet-driven
 e2e tests skip until you supply the fixture above. `unit` (pure functions),
 `int` (real Postgres —
 per-personality scoping and the concurrent metered claim), `http` (auth, tenant
@@ -111,6 +111,56 @@ curl -XPOST http://<host>/api/enrolment/close -H "Authorization: Bearer <operato
 A token also names its own client, so several tenants can enrol machines
 simultaneously. The window path cannot: it scans every client and refuses
 outright when more than one has a window open.
+
+## A machine names its own account
+
+The operator creates **only a personality**. Nobody types an account label
+anywhere: the machine reads the Snapchat handle off its emulator's own profile
+screen and registers it.
+
+```
+POST /v1/personalities/:id/accounts   { "handle": "iraxcvp" }
+```
+
+Authenticated by the machine's own client key, like every other `/v1` call. It
+is deliberately **not** the operator's `POST /api/personalities/:id/accounts`,
+which still exists and still refuses a label it already has — an operator typing
+a name twice has made a mistake.
+
+Here a repeat is the normal case, and that is the whole endpoint:
+
+| | |
+|---|---|
+| handle new to this personality | **201**, `created: true` |
+| handle already this personality's | **200**, `created: false`, **the same account** |
+| handle under another of this client's personalities | **409**, naming that personality |
+| handle that is not one | 400, quoting what was sent |
+| personality unknown, or another client's | 404 — the id is the secret |
+
+**200 rather than an error is load-bearing.** The roster a machine holds is
+client-wide and says nothing about which emulator owns which account, so an
+agent does not trust an account it did not register itself: on every restart it
+re-reads its screen and registers again. If that answered 409 the machine could
+never resolve its account and would never run. The handle on the screen is the
+identity, not the order machines happened to enrol in — so two boxes under one
+personality send two handles and get two accounts, rather than silently sharing
+one and draining its cap twice.
+
+409 is the opposite case and has to be loud: the same handle under a *different*
+personality means the operator picked the wrong personality for this emulator,
+which nothing downstream can detect.
+
+New accounts take the schema's default cap rather than one the machine asks for
+— a young account hits Snapchat's add-cooldown around 40 adds/day, and the
+operator raises it in the CRM once it has settled.
+
+`accounts.displayName` and `accounts.machine` record what the registering box
+saw around the handle. Operator context only; both are absent from every reply,
+including the one the agent parses.
+
+The contract is `CRM-CHANGES.md` in the snap-automation repo; the tests that
+hold us to it are `test/http/registration.http.spec.ts` and
+`test/registration.int.spec.ts`.
 
 ## Forward or drop — there is no review
 

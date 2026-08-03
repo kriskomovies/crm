@@ -14,14 +14,15 @@
  */
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { AssignmentState } from '@prisma/client';
+import { AssignmentState, Prisma } from '@prisma/client';
 
 import { pageSize, slicePage } from '../common/pagination';
-import { isPlausibleHandle, normHandle } from '../extraction/normalize';
+import { cleanDisplayName, isPlausibleHandle, normHandle } from '../extraction/normalize';
 import { PipelineService } from '../pipeline/pipeline.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { RetentionService } from '../retention/retention.service';
@@ -39,6 +40,9 @@ const MAX_HANDLE_INPUT = 200;
 
 /** Long enough for any real display name; short enough that LIKE stays cheap. */
 const MAX_SEARCH = 100;
+
+/** A hostname, not an essay. Context for the operator, never matched on. */
+const MAX_MACHINE = 100;
 
 @Injectable()
 export class PersonalitiesService {
@@ -104,22 +108,122 @@ export class PersonalitiesService {
       client: p.client.name,
       model: p.client.extractionModel,
       people: p._count.people,
-      accounts: p.accounts.map((a) => {
-        const c = byAccount.get(a.id) ?? {};
-        const used = today.get(a.id) ?? 0;
-        return {
-          id: a.id,
-          label: a.label,
-          dailyCap: a.dailyCap,
-          enabled: a.enabled,
-          handedToday: used,
-          remainingToday: Math.max(0, a.dailyCap - used),
-          queued: c.queued ?? 0,
-          handedOut: c.handed_out ?? 0,
-          followed: c.followed ?? 0,
-        };
-      }),
+      accounts: p.accounts.map((a) =>
+        accountView(a, byAccount.get(a.id) ?? {}, today.get(a.id) ?? 0),
+      ),
     }));
+  }
+
+  /**
+   * A machine creating its own account, from the handle it read off its
+   * emulator's own profile screen. The operator creates ONLY the personality;
+   * nobody types the label in anywhere.
+   *
+   * This is the /v1 twin of addAccount, and deliberately not the same method.
+   * addAccount is the operator's -- it refuses a label that already exists,
+   * because an operator typing a name twice has made a mistake. Here a repeat is
+   * the NORMAL case: every restart of an already-registered machine takes this
+   * path, so an error would mean it could never resolve its account again. The
+   * handle on the screen is the identity, and the answer to "register this
+   * handle" is the account holding it, whether or not this call created it.
+   *
+   * The same reasoning is why 409 exists and is narrow: the handle already
+   * belonging to ANOTHER of the client's personalities means the operator picked
+   * the wrong personality for this emulator, which nothing downstream can
+   * detect and no upsert can absorb.
+   */
+  async registerAccount(
+    clientId: string,
+    personalityId: string,
+    input: { handle: string; displayName?: string; machine?: string },
+  ): Promise<{ created: boolean; account: AccountView }> {
+    await this.assertExists(clientId, personalityId);
+
+    const label = normHandle(input.handle);
+    if (!isPlausibleHandle(label)) {
+      // The rejected value, quoted, and what a handle looks like: this message
+      // is read by whoever is stood at the machine, and the usual cause is a
+      // misread screen rather than a typo.
+      throw new BadRequestException(
+        `"${(input.handle ?? '').slice(0, MAX_HANDLE_INPUT)}" is not a Snapchat handle. ` +
+          'Expected 3-15 characters starting with a letter, then letters, digits, ' +
+          'dot, underscore or hyphen.',
+      );
+    }
+
+    const existing = await this.prisma.account.findUnique({
+      where: { personalityId_label: { personalityId, label } },
+    });
+    if (existing) return { created: false, account: await this.accountWithCounts(existing) };
+
+    // Scoped to this client, and only to its OTHER personalities: the same
+    // handle under two clients is two unrelated Snapchat accounts as far as this
+    // server can tell, and under THIS personality it was already returned above.
+    const elsewhere = await this.prisma.account.findFirst({
+      where: { label, personalityId: { not: personalityId }, personality: { clientId } },
+      select: { personality: { select: { name: true } } },
+    });
+    if (elsewhere) {
+      throw new ConflictException(
+        `"${label}" is already registered under the personality "${elsewhere.personality.name}". ` +
+          'Select that personality for this emulator, or check that the right ' +
+          'emulator is selected for this one.',
+      );
+    }
+
+    // dailyCap is left to the column default rather than passed. New accounts
+    // hit Snapchat's add-cooldown around 40 a day, so the conservative default
+    // is the right starting point and the operator raises it in the CRM.
+    const data = {
+      personalityId,
+      label,
+      displayName: cleanDisplayName(input.displayName) || null,
+      machine: (input.machine ?? '').trim().slice(0, MAX_MACHINE) || null,
+    };
+
+    let account: AccountRow;
+    let created = true;
+    try {
+      account = await this.prisma.account.create({ data });
+    } catch (e) {
+      // P2002 on (personalityId, label): a concurrent identical registration got
+      // there first. Two machines racing must end with ONE account, and the
+      // loser is owed the same answer the winner got -- this is the same request
+      // twice, not a conflict. Anything else is a real failure and rethrows.
+      if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== 'P2002') throw e;
+      account = await this.prisma.account.findUniqueOrThrow({
+        where: { personalityId_label: { personalityId, label } },
+      });
+      created = false;
+    }
+    // Counted after the branches so both answer through one projection: a caller
+    // cannot tell whether it won the race from the shape of what it gets back.
+    return { created, account: await this.accountWithCounts(account) };
+  }
+
+  /**
+   * One account in the shape `list` nests, counters and all.
+   *
+   * Two queries for one account, where `list` does two for every account a
+   * client has. That is the right trade in opposite directions: this runs once
+   * per registration, and a registration must answer with live numbers because
+   * the agent adopts this object and starts its first cycle from it without a
+   * second fetch.
+   */
+  private async accountWithCounts(a: AccountRow): Promise<AccountView> {
+    const [states, handedToday] = await Promise.all([
+      this.prisma.assignment.groupBy({
+        by: ['state'],
+        where: { accountId: a.id },
+        _count: { _all: true },
+      }),
+      this.prisma.assignment.count({
+        where: { accountId: a.id, handedOutAt: { gte: startOfToday() } },
+      }),
+    ]);
+    const counts: Record<string, number> = {};
+    for (const s of states) counts[s.state] = s._count._all;
+    return accountView(a, counts, handedToday);
   }
 
   /** Adjust an account's cap or pause it without deleting its history. */
@@ -416,6 +520,44 @@ function assignmentState(raw: string): AssignmentState {
     );
   }
   return state;
+}
+
+/** The columns every account projection needs. Less than a full Account row. */
+type AccountRow = { id: string; label: string; dailyCap: number; enabled: boolean };
+
+export interface AccountView extends AccountRow {
+  handedToday: number;
+  remainingToday: number;
+  queued: number;
+  handedOut: number;
+  followed: number;
+}
+
+/**
+ * The one account shape the API hands out, in `GET /api/personalities` and in
+ * the reply to a machine registering itself.
+ *
+ * One function rather than two literals because the agent adopts the
+ * registration reply directly and starts its first cycle from it -- it is the
+ * same object it would otherwise have read from the list, so the two drifting
+ * apart would be a field the agent silently stops finding.
+ */
+function accountView(
+  a: AccountRow,
+  counts: Record<string, number>,
+  handedToday: number,
+): AccountView {
+  return {
+    id: a.id,
+    label: a.label,
+    dailyCap: a.dailyCap,
+    enabled: a.enabled,
+    handedToday,
+    remainingToday: Math.max(0, a.dailyCap - handedToday),
+    queued: counts.queued ?? 0,
+    handedOut: counts.handed_out ?? 0,
+    followed: counts.followed ?? 0,
+  };
 }
 
 /** Local midnight. Caps reset by the operator's day, not UTC's. */
