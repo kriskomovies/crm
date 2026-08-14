@@ -230,6 +230,67 @@ export class TargetsService {
   }
 
   /**
+   * Handles this account will never be told to add, newest first.
+   *
+   * The agent hides these from its emulator's Quick Add roster, which is what
+   * makes the next refresh serve new faces instead of the same declined ones.
+   * Two populations, and the second is the one that is easy to miss:
+   *
+   *   no assignment at all      `filter` declined them -- a rule rejected them,
+   *                             no rule matched, the country reading was too
+   *                             weak, the avatar and the name disagreed, or they
+   *                             are a near duplicate. Every drop is silent and
+   *                             this is the only place they surface.
+   *   assigned to a SIBLING     a person another account of the same personality
+   *                             already holds. UNIQUE (personId) means this
+   *                             account is never getting them -- that is the
+   *                             dedupe the product sells -- so on this roster
+   *                             they are permanent clutter. A personality runs
+   *                             up to ten accounts, so on the tenth roster this
+   *                             is the larger of the two populations.
+   *
+   * A person assigned to THIS account is excluded whatever their state, and that
+   * is the whole safety of it. `queued` is waiting to be handed out, `handed_out`
+   * is being followed right now, and `failed` requeues -- hiding any of them
+   * would destroy a target this account is about to work. `skipped` is terminal
+   * and could safely be hidden, but is left alone: it is usually "no row read as
+   * this handle", which is evidence the person was never on the roster to begin
+   * with rather than evidence they are cluttering it.
+   *
+   * Scoped to the personality rather than to the sheets this account uploaded.
+   * Narrowing by `firstSeenSheet` would be tighter and is wrong for the case
+   * that matters most: when a sibling account saw someone first, the Person row
+   * points at the SIBLING's sheet, so exactly the people this account most needs
+   * to hide would be the ones filtered out.
+   *
+   * Sending more handles than are on the roster is therefore expected and
+   * harmless. The agent OCRs each row and acts only on an exact match, so a
+   * handle that is not on screen is a few bytes and nothing else -- whereas a
+   * handle that is missing is a row nobody can ever hide. `take` bounds the
+   * reply because the ledger grows without limit and a roster is ~99 people;
+   * newest first is what keeps the overlap high, for the same reason the claim
+   * hands out newest first.
+   */
+  async refusedHandles(accountId: string, take = 500): Promise<string[]> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { personalityId: true },
+    });
+    if (!account) throw new NotFoundException('account not found');
+
+    const people = await this.prisma.person.findMany({
+      where: {
+        personalityId: account.personalityId,
+        OR: [{ assignment: { is: null } }, { assignment: { accountId: { not: accountId } } }],
+      },
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      take,
+      select: { handle: true },
+    });
+    return people.map((p) => p.handle);
+  }
+
+  /**
    * The dedupe ledger for a personality: everyone taken, and by which account.
    *
    * Cursor, not skip. The caller asks for one row more than it means to show

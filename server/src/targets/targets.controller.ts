@@ -100,6 +100,13 @@ export class TargetsController {
       // number older than the batch in front of it -- which is the whole reason
       // this beats a value in a config file on twenty boxes.
       paceSeconds: await this.targets.paceSeconds(accountId),
+      // Who the agent may hide from its Quick Add roster. Read AFTER the claim
+      // above, and the ordering is load-bearing: the claim has just moved this
+      // batch to handed_out under this account, which is what excludes it here.
+      // Computed before it, the rows still queued would have looked like nobody
+      // was going to add them and the agent would have hidden the very people it
+      // was about to follow.
+      refusedHandles: await this.targets.refusedHandles(accountId),
     };
   }
 
