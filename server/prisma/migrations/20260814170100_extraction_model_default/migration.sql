@@ -1,0 +1,35 @@
+-- New clients extract with the cheap model.
+--
+-- gemini-3-flash-preview-nothinking against gemini-3.6-flash, scored on the
+-- keyed 99 in vlm_eval/FORMAT-AB.md at the geometry the pipeline actually sends
+-- (99 entries in a single image):
+--
+--                women forwarded to a men-only feed     $/sheet
+--   3.6-flash    1 of 5                                 $0.1282
+--   nothinking   3 of 5                                 $0.0233
+--
+-- Five women is the entire gender sample in the key, so those are counts and
+-- not rates, and the difference is two people. The 2-of-5 arm in that document
+-- needs the sheet banded into three images of 33; PipelineService sends one
+-- image per sheet, so it is not reachable from this setting and is not what
+-- this default buys.
+--
+-- ONLY THE DEFAULT MOVES. There is deliberately no UPDATE of existing rows.
+-- Changing a running client's model triples its leak count with no operator
+-- action, nothing in any log naming this migration as the cause, and no way for
+-- the operator to notice until a client complains about who they were shown --
+-- which is the same shape of silent, irreversible harm that
+-- 20260814120000_session_cap refused to inflict with a NOT NULL DEFAULT 40.
+-- An existing client changes model on the settings screen, where the two rows
+-- above are printed next to the field before they save.
+--
+-- The corresponding price row has to exist for this to be honest about money:
+-- priceUsd() answers 0 for a model it has no row for, by design, so a default
+-- with no price would book every extraction at $0.000000 and the monthly budget
+-- would never bind. src/extraction/models.ts refuses to boot if that is ever
+-- true, and src/extraction/pricing.ts carries the fitted row.
+--
+-- Idempotent and re-applicable over its own partial failure: setting a default
+-- twice is setting it once.
+ALTER TABLE "clients"
+  ALTER COLUMN "extractionModel" SET DEFAULT 'gemini-3-flash-preview-nothinking';

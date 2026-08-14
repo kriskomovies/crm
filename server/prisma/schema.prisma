@@ -40,7 +40,30 @@ model Client {
 
   /// Which VLM to extract with. Per-client because the accuracy/cost trade-off
   /// is a commercial decision: see vlm_eval/ROUTING.md.
-  extractionModel String @default("gemini-3.6-flash")
+  ///
+  /// Selectable from the settings screen, and only from a closed list --
+  /// src/extraction/models.ts. The value is handed to the gateway as the model
+  /// name, so a string nothing recognises fails every extraction this client
+  /// uploads rather than failing at the point it was typed.
+  ///
+  /// THE DEFAULT IS THE CHEAP MODEL AND IT IS NOT FREE. Scored against the keyed
+  /// 99 in vlm_eval/FORMAT-AB.md, at the geometry the pipeline actually sends
+  /// (99 entries in one image), gemini-3-flash-preview-nothinking forwards 3 of
+  /// the 5 women in the sample to a men-only feed where gemini-3.6-flash
+  /// forwards 1, for $0.0233 a sheet against $0.1282. Five women is the whole
+  /// gender sample, so those are counts and not rates.
+  ///
+  /// The 2-of-5 arm exists but is not reachable from here: it needs the sheet
+  /// banded into three images of 33, and PipelineService sends one image per
+  /// sheet. Selecting the cheap model today buys the 3-of-5 row.
+  ///
+  /// It applies to NEW clients only. The migration that changed it deliberately
+  /// leaves existing rows alone -- swapping a running client's model triples its
+  /// leak count with no operator action and nothing in any log naming the
+  /// migration as the cause, which is the same failure the session cap below is
+  /// written at length about. An existing client changes it on the screen, where
+  /// the numbers above are printed next to the field.
+  extractionModel String @default("gemini-3-flash-preview-nothinking")
   /// Opt-in second avatar-only pass. Halves the women in the "man" bucket
   /// (2.1% -> 1.1%) for +$0.29/1000. Only worth it for country lists that the
   /// dry-run shows are contaminated.
@@ -61,6 +84,67 @@ model Client {
   /// It is a PER-ACCOUNT cap, not a pool: each account gets this many, so
   /// adding an account adds throughput rather than dividing it.
   dailyCapPerAccount Int @default(240)
+
+  /// Targets handed to EACH account inside any rolling sessionWindowMinutes.
+  ///
+  /// A second cap beside the daily one, and it exists because one account given
+  /// a whole day's 240 in one run spends the tail of it against a cooldown that
+  /// will not lift: a young Snapchat account stops accepting adds at roughly 40
+  /// a day in testing, so every attempt after that is a spinner that never
+  /// settles. The operator wants to work 40 on account A, rotate to B, then C,
+  /// and come back to A -- and this is the number that makes the server refuse
+  /// to hand A the 41st until it is due.
+  ///
+  /// A ROLLING WINDOW rather than a session, because a session is not a thing
+  /// this server can observe: it has no idea when a machine starts or stops
+  /// working an account, and inventing a session concept would mean trusting a
+  /// machine to declare one. What it can observe is handedOutAt, so the rule is
+  /// "no account is handed more than sessionCapPerAccount targets in any
+  /// rolling sessionWindowMinutes". That degenerates to whatever is wanted: a
+  /// window of 1440 makes it a second daily cap, 60 gives the rotation above.
+  ///
+  /// ENFORCED, not served, exactly like dailyCapPerAccount -- TargetsService
+  /// .claim meters against both inside one transaction under one row lock, so a
+  /// machine running an older build that has never heard of this still gets
+  /// nothing once the window is full.
+  ///
+  /// Counted from handedOutAt, which means a `failed` report that requeues a row
+  /// keeps the attempt counted against the window it was first handed in and
+  /// never counts again. That matches the daily cap and is deliberate: the
+  /// follow attempt was really made, and it is attempts Snapchat rate-limits.
+  ///
+  /// DEFAULTS TO 80, WHICH MEANS IT IS ON. It shipped at 2000 for one release
+  /// -- the DTO's ceiling, a value that cannot bind at any daily cap of 1000 or
+  /// less, chosen so that adding the column changed nothing for anyone -- and
+  /// 80 is the operator's number. At 80 per rolling 60 minutes against a daily
+  /// cap of 240 the cap binds: a claim is truncated while remainingToday is
+  /// still healthy, three times a day, which is the rotation it is for.
+  ///
+  /// THAT TRUNCATION IS THE HAZARD, and it is why the previous default was off.
+  /// An agent build older than the session cap reads "short batch, budget still
+  /// on the clock" as proof the CRM has nobody left for it, and on that proof
+  /// runs an irreversible pass hiding the people it was not handed from the
+  /// emulator's Quick Add roster. Those are people this CRM approved and hands
+  /// out in the next window, and they are gone from that device for good.
+  ///
+  /// So this default is safe ONLY against agents that read remainingInWindow,
+  /// which is exactly what snapclient.contract_check verifies. Deploy order:
+  /// agents first, then this. An operator who cannot confirm the fleet should
+  /// set the cap back to 2000 on the settings screen, which turns it off again
+  /// without a migration.
+  sessionCapPerAccount Int @default(80)
+
+  /// How long the window above is, in minutes.
+  ///
+  /// Never 0: a window of zero length counts nothing, so the cap beside it could
+  /// never bind and would read as a setting while being off. The floor is 1.
+  ///
+  /// 60 is the rotation the operator described -- work one account, rotate to
+  /// the next, come back when the window has rolled. A window is only ever half
+  /// a setting, and the other half is no longer off: with the cap beside it at
+  /// 80 this number is what decides how long an account waits, not just how the
+  /// cap would be measured if anyone turned it on.
+  sessionWindowMinutes Int @default(60)
 
   /// Seconds a machine waits between follows, before its own jitter.
   ///

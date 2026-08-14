@@ -27,6 +27,34 @@ export interface TargetRow {
 /** Results an account may report back for a handed-out target. */
 export type FollowResult = 'followed' | 'failed' | 'skipped';
 
+/**
+ * A claim, and how much of the session budget it left behind.
+ *
+ * claim() used to return the rows alone, and the caller asked its follow-up
+ * questions -- remainingToday, paceSeconds -- afterwards, in their own queries.
+ * remainingInWindow cannot be one of those. Between the transaction committing
+ * and a second query running, the oldest handout in the window can age out of
+ * it, and the answer would come back "there is room" for a batch the session
+ * cap had just truncated. That is the exact reading an agent uses to decide the
+ * claim ran out of QUEUE rather than out of cap -- and on that reading it runs
+ * an irreversible pass that hides people from its Quick Add roster. Being
+ * milliseconds wrong there hides somebody the CRM approved and was about to
+ * hand out, permanently.
+ *
+ * So the number leaves the transaction that computed it, alongside the rows.
+ */
+export interface ClaimResult {
+  targets: TargetRow[];
+  /**
+   * Targets this account may still be handed inside the current rolling
+   * window, after this claim. Zero means the window is full: the batch above
+   * may be short for that reason and not because the queue ran dry.
+   */
+  remainingInWindow: number;
+  /** How long that window is, so a client can size a wait instead of polling. */
+  sessionWindowMinutes: number;
+}
+
 @Injectable()
 export class TargetsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -68,11 +96,16 @@ export class TargetsService {
   }
 
   /**
-   * Claim up to `limit` queued targets, capped by what is left today.
+   * Claim up to `limit` queued targets, capped by what is left today AND by
+   * what is left in this account's rolling session window.
    *
    * Returns fewer rows than asked for -- often zero -- and that is normal, not
-   * an error: it means the cap is spent or the queue is empty. Clients should
-   * back off rather than retry immediately.
+   * an error: it means one of the two caps is spent or the queue is empty.
+   * Clients should back off rather than retry immediately, and remainingToday
+   * and remainingInWindow are what let them tell those three apart. Before the
+   * session cap existed a short batch with budget on the clock could only mean
+   * an empty queue, and at least one agent in the field reasons that way -- see
+   * ClaimResult for what it does with the answer.
    *
    * Wrapped in a transaction that takes a row lock on the account first. SKIP
    * LOCKED keeps the two callers of an overlapping poll off each other's rows,
@@ -85,18 +118,29 @@ export class TargetsService {
    * documented normal case here.
    *
    * The lock serialises claims for THIS account only; other accounts are
-   * untouched, and the count still comes from handedOutAt rather than a counter
-   * column, so a crashed worker or a rolled-back transaction cannot leak cap.
+   * untouched, and both counts still come from handedOutAt rather than from
+   * counter columns, so a crashed worker or a rolled-back transaction cannot
+   * leak either cap.
    */
-  async claim(accountId: string, limit: number): Promise<TargetRow[]> {
+  async claim(accountId: string, limit: number): Promise<ClaimResult> {
     const since = utcLiteral(startOfToday());
     return this.prisma.$transaction(async (tx) => {
-      // FOR UPDATE OF a, not a bare FOR UPDATE: the cap now comes from the
+      // FOR UPDATE OF a, not a bare FOR UPDATE: the caps now come from the
       // client row, and locking that too would serialise the claims of every
       // account the client owns against each other. The lock this needs is on
       // the one account whose budget is about to be counted and spent.
-      const [account] = await tx.$queryRaw<{ dailyCap: number; enabled: boolean }[]>`
-        SELECT c."dailyCapPerAccount" AS "dailyCap", a.enabled
+      //
+      // The session cap and its window come out of this same statement for that
+      // reason: clients is already in the join, so two more columns leave the
+      // lock footprint byte-identical, where a second lookup of the client row
+      // would not.
+      const [account] = await tx.$queryRaw<
+        { dailyCap: number; sessionCap: number; windowMinutes: number; enabled: boolean }[]
+      >`
+        SELECT c."dailyCapPerAccount" AS "dailyCap",
+               c."sessionCapPerAccount" AS "sessionCap",
+               c."sessionWindowMinutes" AS "windowMinutes",
+               a.enabled
         FROM accounts a
         JOIN personalities p ON p.id = a."personalityId"
         JOIN clients c ON c.id = p."clientId"
@@ -104,7 +148,16 @@ export class TargetsService {
         FOR UPDATE OF a
       `;
       if (!account) throw new NotFoundException('account not found');
-      if (!account.enabled) return [];
+      const windowMinutes = account.windowMinutes;
+      if (!account.enabled) {
+        // Zero rather than the untouched session budget, to match
+        // remainingToday(), which also answers 0 for a disabled account. A
+        // client reads the daily number first, so a paused account still
+        // presents as "spent" rather than as "this window is full" -- the
+        // longer back-off, which is the right one for an account an operator
+        // has switched off.
+        return { targets: [], remainingInWindow: 0, sessionWindowMinutes: windowMinutes };
+      }
 
       const [used] = await tx.$queryRaw<{ n: number }[]>`
         SELECT count(*)::int AS n
@@ -112,13 +165,50 @@ export class TargetsService {
         WHERE "accountId" = ${accountId}
           AND "handedOutAt" >= ${since}::timestamp
       `;
-      const take = Math.max(0, Math.min(limit, account.dailyCap - used.n));
-      if (take === 0) return [];
+
+      // The same count with a different lower bound, issued inside the same
+      // transaction so it sees the same snapshot and is covered by the same
+      // held row lock -- no second serialisation point, and no window in which
+      // one of the two counts is stale with respect to the other.
+      //
+      // NOT `NOW() - make_interval(...)`. NOW() is timestamptz and handedOutAt
+      // is timestamp WITHOUT time zone holding UTC, so comparing them renders
+      // NOW() in the session TimeZone -- Europe/Kiev on this box -- and slides
+      // the window three hours. Binding a JS Date computed in the service has
+      // the same fault from the other direction, which is what utcLiteral()
+      // exists to document. `NOW() AT TIME ZONE 'UTC'` is a bare timestamp
+      // holding UTC, the identical expression the UPDATE below writes into the
+      // column, and subtracting an interval from it stays a timestamp.
+      //
+      // make_interval rather than a string-built `n || ' minutes'` interval,
+      // because the latter is text arithmetic on a value from the database and
+      // buys nothing. The ::int cast is what stops the parameter arriving
+      // untyped.
+      const [usedInWindow] = await tx.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n
+        FROM assignments
+        WHERE "accountId" = ${accountId}
+          AND "handedOutAt" >= (NOW() AT TIME ZONE 'UTC')
+                               - make_interval(mins => ${windowMinutes}::int)
+      `;
+
+      const roomInWindow = account.sessionCap - usedInWindow.n;
+      const take = Math.max(
+        0,
+        Math.min(limit, account.dailyCap - used.n, roomInWindow),
+      );
+      if (take === 0) {
+        return {
+          targets: [],
+          remainingInWindow: Math.max(0, roomInWindow),
+          sessionWindowMinutes: windowMinutes,
+        };
+      }
 
       // One statement: pick the oldest queued rows for this account, skip any a
       // concurrent poll is already holding, flip them to handed_out, and return
       // them joined to the person. Nothing between the select and the update.
-      return tx.$queryRaw<
+      const rows = await tx.$queryRaw<
         { handle: string; displayName: string; nationality: string | null; reason: string | null }[]
       >`
       WITH claimed AS (
@@ -180,6 +270,20 @@ export class TargetsService {
                 p.nationality AS nationality,
                 a.reason AS reason
       `;
+
+      // Every row above was just stamped with a handedOutAt inside the window,
+      // so it is spent from it. Counted here rather than re-queried because a
+      // second count would be answering about a window that has moved on.
+      //
+      // Exact, not approximate: NOW() inside a transaction is the transaction's
+      // start time, so the UPDATE stamped those rows at the same instant the
+      // count above bounded on. They cannot land outside the window they were
+      // just measured against.
+      return {
+        targets: rows,
+        remainingInWindow: Math.max(0, roomInWindow - rows.length),
+        sessionWindowMinutes: windowMinutes,
+      };
     });
   }
 

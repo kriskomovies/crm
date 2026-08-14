@@ -158,7 +158,11 @@ async function sweptInRollback(
         });
 
         const svc = retentionFor(tx, env);
-        const results = [];
+        // Annotated rather than inferred: `[]` inside this callback widens to
+        // never[] and the push below stops compiling. It never showed up
+        // because test/ was outside the type-checking project until the session
+        // cap landed and put it back in.
+        const results: { deleted: number; failed: number }[] = [];
         for (let i = 0; i < passes; i++) results.push(await svc.sweep());
 
         captured = {

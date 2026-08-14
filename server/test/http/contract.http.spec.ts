@@ -11,9 +11,9 @@
  * And one deliberate exception, checked just as hard: GET
  * /v1/accounts/:id/targets is not a list. It is a metered claim -- calling it
  * SPENDS today's cap and mutates rows -- and it answers `{ targets,
- * remainingToday }`. Anyone tidying that into the envelope would be turning a
- * side-effecting claim into something that reads like a page of data, and the
- * remainingToday field, which exists so a client can back off instead of
+ * remainingToday, ... }`. Anyone tidying that into the envelope would be
+ * turning a side-effecting claim into something that reads like a page of data,
+ * and the budget fields, which exist so a client can back off instead of
  * hot-polling an exhausted cap, would go with it.
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -47,8 +47,8 @@ interface Ctx {
   accountId: string;
 }
 
-async function ctx(): Promise<Ctx> {
-  const client = await makeClient();
+async function ctx(opts: { sessionCap?: number } = {}): Promise<Ctx> {
+  const client = await makeClient(opts);
   return {
     client,
     auth: `Bearer ${client.apiKey}`,
@@ -142,7 +142,7 @@ describe('every list endpoint answers in the {items, nextCursor} envelope', () =
 });
 
 describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
-  it('answers {targets, remainingToday, paceSeconds} and nothing else', async () => {
+  it('answers the claim shape and nothing else', async () => {
     const c = await ctx();
     await queueTargets(c.personalityId, c.accountId, 3);
 
@@ -151,7 +151,10 @@ describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual([
       'paceSeconds',
+      'refusedHandles',
+      'remainingInWindow',
       'remainingToday',
+      'sessionWindowMinutes',
       'targets',
     ]);
     // Explicitly NOT the envelope. Pinned so that a sweep to "make every
@@ -162,6 +165,16 @@ describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
     expect(res.body.nextCursor).toBeUndefined();
     expect(res.body.targets).toHaveLength(2);
     expect(typeof res.body.remainingToday).toBe('number');
+    // The second budget. A short batch used to mean "the queue is dry" once
+    // remainingToday was healthy, and an agent hides people from its Quick Add
+    // roster on that reading; with a session cap able to truncate a batch too,
+    // both budgets have to be on the wire or that reading is wrong and the
+    // damage is permanent.
+    expect(typeof res.body.remainingInWindow).toBe('number');
+    // Served so a client that finds the window full can sleep for a share of it
+    // rather than hot-poll a metered write until it rolls.
+    expect(typeof res.body.sessionWindowMinutes).toBe('number');
+    expect(Array.isArray(res.body.refusedHandles)).toBe(true);
     // Delivered with the batch it applies to, so a machine cannot pace on a
     // number older than the work in front of it.
     expect(typeof res.body.paceSeconds).toBe('number');
@@ -200,6 +213,25 @@ describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
     expect(res.status).toBe(200);
     expect(res.body.targets).toEqual([]);
     expect(res.body.remainingToday).toBe(50);
+    // Both budgets untouched, which is what makes this "no work exists" rather
+    // than "you have spent something". Either one at zero would be a different
+    // answer to the same empty list.
+    expect(res.body.remainingInWindow).toBe(2000);
+  });
+
+  it('states the window is what stopped a short batch, not the queue', async () => {
+    const c = await ctx({ sessionCap: 2 });
+    await queueTargets(c.personalityId, c.accountId, 6);
+
+    const res = await api.get(`/v1/accounts/${c.accountId}/targets?limit=5`, { auth: c.auth });
+
+    expect(res.body.targets).toHaveLength(2);
+    // Asked for five, got two, and 48 still to come today. Before the session
+    // cap that combination could only mean the queue had run out, and the four
+    // rows left behind would have been read as people nobody was going to add.
+    expect(res.body.remainingToday).toBe(48);
+    expect(res.body.remainingInWindow).toBe(0);
+    expect(res.body.sessionWindowMinutes).toBe(60);
   });
 });
 
@@ -323,13 +355,57 @@ describe('the non-list endpoints', () => {
     expect(res.body).toMatchObject({ dailyCap: 50, enabled: false });
   });
 
-  it('GET /api/settings answers the two pacing numbers and nothing else', async () => {
+  it('POST /api/accounts/:id/reset-daily-cap reports what it freed, with a 200', async () => {
+    const c = await ctx();
+    await queueTargets(c.personalityId, c.accountId, 3);
+    // Claimed over HTTP so the row lock, the guard and the real claim path are
+    // all in the picture, rather than rows written straight into the table.
+    await api.get(`/v1/accounts/${c.accountId}/targets?limit=3`, { auth: c.auth });
+
+    const res = await api.post(`/api/accounts/${c.accountId}/reset-daily-cap`, { auth: c.auth });
+
+    // 200, not Nest's default 201 for POST: nothing was created, and the body
+    // is a report of what changed.
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual([
+      'cleared',
+      'handedToday',
+      'id',
+      'label',
+      'remainingToday',
+      'requeued',
+    ]);
+    // Two counts because they answer two questions: how many cap slots came
+    // back, and how many rows were stuck mid-flight and are workable again.
+    expect(res.body).toMatchObject({
+      id: c.accountId,
+      requeued: 3,
+      cleared: 3,
+      handedToday: 0,
+      remainingToday: 50,
+    });
+  });
+
+  it('GET /api/settings answers the four pacing numbers, the model, and nothing else', async () => {
     const c = await ctx();
     const res = await api.get('/api/settings', { auth: c.auth });
     expect(res.status).toBe(200);
+    // Pinned as an exact set in both directions. A field that reaches the DTO
+    // but misses the GET select saves and reads back unchanged, which on the
+    // screen is indistinguishable from a save that never happened -- and a
+    // field that leaks in here is a client's setting escaping into a reply
+    // nobody audited.
+    //
+    // `models` is the one key here that is not a stored setting: it is the
+    // closed option list the model dropdown is built from, served rather than
+    // hardcoded in the UI so the two cannot drift.
     expect(Object.keys(res.body).sort()).toEqual([
       'dailyCapPerAccount',
+      'extractionModel',
       'followPaceSeconds',
+      'models',
+      'sessionCapPerAccount',
+      'sessionWindowMinutes',
     ]);
   });
 

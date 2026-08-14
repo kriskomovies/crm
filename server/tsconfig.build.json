@@ -1,0 +1,18 @@
+// The EMIT project: what `nest build` compiles into dist and the container.
+//
+// It exists only to narrow tsconfig.json, which was widened to cover test/ and
+// scripts/ so that `npx tsc --noEmit` actually checks them. Without this file
+// that widening would also ship the integration suite and the demo script into
+// the image.
+//
+// `declaration` lives here rather than in the base for the same reason: it is
+// an emit setting, and as a CHECK it fails on test helpers that re-export
+// vitest internals no .d.ts is ever written for.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "test", "prisma", "scripts", "**/*.spec.ts"]
+}

@@ -131,6 +131,23 @@ button.link {
 }
 button.more { display: block; margin: 14px auto 0; }
 
+/* The export has to be an anchor, not a button: it is a normal navigation to a
+   route that streams the file, so the browser never holds the ledger. It sits in
+   a toolbar next to real controls, so it borrows their box exactly. */
+a.button {
+  display: inline-block;
+  background: var(--inset);
+  border: 1px solid var(--line);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 8px;
+  font: inherit;
+  line-height: 1.55;
+  text-decoration: none;
+  white-space: nowrap;
+}
+a.button:hover { border-color: #38414f; }
+
 input, select, textarea {
   background: var(--bg);
   border: 1px solid var(--line);
@@ -161,6 +178,16 @@ input.mini { width: 68px; padding: 5px 8px; text-align: right; }
   font-size: 12.5px;
   white-space: nowrap;
 }
+/* Sized to its longest option rather than to the row: selects inherit
+   width:100% from the input rule, which in a .cap-input label would push the
+   explanation beside it onto its own line at every width. */
+.model-select { width: auto; max-width: 100%; }
+
+/* An .inset block that holds prose rather than a form: p keeps its own margins
+   between paragraphs and drops them at the edges, so the block does not sit in
+   a gap that reads as a missing element. */
+.inset > p:first-child { margin-top: 0; }
+.inset > p:last-child { margin-bottom: 0; }
 
 .toolbar {
   display: flex;
@@ -196,6 +223,24 @@ tr.off { opacity: 0.5; }
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .cap-col { min-width: 180px; }
 .actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+
+/* A full-width cell under a row, for a control that has to explain itself
+   before it fires. It opts out of the label/value stacking below: every other
+   td becomes a right-aligned pair with its column name on the left, which would
+   set these sentences ragged-left against an empty label. */
+td.rowdetail {
+  background: var(--inset);
+  padding: 12px 14px;
+  text-align: left;
+  font-size: 12.5px;
+}
+td.rowdetail::before { content: none; }
+/* Only below the breakpoint. A block td on a wide screen drops out of the table
+   layout and the colspan stops spanning anything. */
+@media (max-width: 719px) { td.rowdetail { display: block; } }
+.rowdetail-p { margin: 0 0 8px; }
+.rowdetail-p:last-child { margin-bottom: 0; }
+.rowdetail-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* Below 720px a row becomes a card: each cell gets its header as a label, so
    nothing depends on a column heading that has scrolled out of view. */

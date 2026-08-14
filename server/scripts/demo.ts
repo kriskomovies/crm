@@ -58,14 +58,20 @@ async function seed() {
       name: 'demo agency',
       apiKeyHash: hashApiKey('demo-key-001'),
       extractionModel: 'gemini-3.6-flash',
+      // Per CLIENT, not per account: Account.dailyCap was folded into
+      // Client.dailyCapPerAccount and this script was left behind, which only
+      // surfaced when test/ and scripts/ were put back inside the
+      // type-checking project. 25 is what each of the three accounts below
+      // gets, not what they share.
+      dailyCapPerAccount: 25,
       personalities: {
         create: {
           name: 'kris',
           accounts: {
             create: [
-              { label: 'kris_snap_01', dailyCap: 25 },
-              { label: 'kris_snap_02', dailyCap: 25 },
-              { label: 'kris_snap_03', dailyCap: 5 },
+              { label: 'kris_snap_01' },
+              { label: 'kris_snap_02' },
+              { label: 'kris_snap_03' },
             ],
           },
         },
@@ -86,7 +92,7 @@ async function seed() {
   console.log(`client       ${client.name}`);
   console.log(`personality  ${personality.name}  (${personality.id})`);
   for (const a of personality.accounts) {
-    console.log(`  account ${a.label}  cap ${a.dailyCap}/day`);
+    console.log(`  account ${a.label}  cap ${client.dailyCapPerAccount}/day`);
   }
   return { client, personality, accounts: personality.accounts };
 }
@@ -151,13 +157,20 @@ async function main() {
   );
 
   console.log(rule('4. ACCOUNT 01 ASKS WHO TO FOLLOW  (daily cap 25)'));
-  const first = await targets.claim(a1.id, 10);
+  // claim() answers {targets, remainingInWindow, sessionWindowMinutes} rather
+  // than a bare array: a short batch has two possible causes now, and the
+  // second number is what tells "the window is full" from "the queue is dry".
+  const first = (await targets.claim(a1.id, 10)).targets;
   console.log(`claimed ${first.length}, remaining today ${await targets.remainingToday(a1.id)}`);
   for (const t of first.slice(0, 6)) {
     console.log(`  @${t.handle.padEnd(18)} ${(t.displayName || '').slice(0, 22).padEnd(24)} ${t.reason}`);
   }
   const second = await targets.claim(a1.id, 100);
-  console.log(`asked for 100 more, got ${second.length} (cap ${a1.dailyCap} minus the 10 already taken)`);
+  console.log(
+    `asked for 100 more, got ${second.targets.length} ` +
+      `(cap ${client.dailyCapPerAccount} minus the 10 already taken), ` +
+      `window has ${second.remainingInWindow} left of its ${second.sessionWindowMinutes} minutes`,
+  );
   console.log(`remaining today ${await targets.remainingToday(a1.id)}`);
 
   console.log(rule('5. ACCOUNT 01 REPORTS RESULTS'));

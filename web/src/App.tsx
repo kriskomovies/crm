@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api, type Personality } from './api';
+import { Followed } from './Followed';
 import { Login } from './Login';
 import { Personalities } from './Personalities';
 import { Settings } from './Settings';
@@ -11,6 +12,7 @@ import { Targets } from './Targets';
 
 type View =
   | { tab: 'personalities'; open: Personality | null }
+  | { tab: 'followed' }
   | { tab: 'stats' }
   | { tab: 'sheets' }
   | { tab: 'targeting' }
@@ -93,6 +95,12 @@ export default function App() {
             Personalities
           </button>
           <button
+            className={view.tab === 'followed' ? 'on' : ''}
+            onClick={() => setView({ tab: 'followed' })}
+          >
+            Followed
+          </button>
+          <button
             className={view.tab === 'stats' ? 'on' : ''}
             onClick={() => setView({ tab: 'stats' })}
           >
@@ -123,6 +131,8 @@ export default function App() {
       {!data && !err && <p className="muted">loading…</p>}
 
       <main>
+        {view.tab === 'followed' && <Followed personalities={data ?? []} />}
+
         {view.tab === 'stats' && <Stats personalities={data ?? []} />}
 
         {view.tab === 'sheets' && <Sheets />}

@@ -27,6 +27,7 @@ import { randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 
 import { hashApiKey } from '../auth/api-key.guard';
+import { EXTRACTION_MODELS } from '../extraction/models';
 
 const prisma = new PrismaClient();
 
@@ -71,10 +72,21 @@ export async function main(): Promise<void> {
   // the golden sheet put 64-66 of 99 names in the English bucket, and 80 of 99
   // come back low confidence -- a medium bar passes 1 English-reading man in 65.
   const countries = list('countries', 'English');
-  const model = arg('model', 'gemini-3.6-flash');
+  // Empty rather than a hardcoded model name, so an unflagged run takes the
+  // column default and there is one place that decides which model is default.
+  // A literal here would have gone on provisioning 3.6-flash long after the
+  // schema said otherwise, and nothing would have reported the disagreement.
+  const model = arg('model', '');
 
   if (!labels.length) throw new Error('--accounts needs at least one label');
   if (!Number.isInteger(cap) || cap < 1) throw new Error('--cap must be a positive integer');
+  // Checked here for the same reason the settings DTO checks it: an unrecognised
+  // name is accepted by the column and then fails every extraction this client
+  // ever uploads, one gateway error per sheet, with nothing pointing at the
+  // typo.
+  if (model && !(EXTRACTION_MODELS as readonly string[]).includes(model)) {
+    throw new Error(`--model must be one of ${EXTRACTION_MODELS.join(', ')}`);
+  }
 
   let client = await prisma.client.findFirst({ where: { name: clientName } });
   let apiKey: string | null = null;
@@ -99,7 +111,7 @@ export async function main(): Promise<void> {
       data: {
         name: clientName,
         apiKeyHash: hashApiKey(apiKey),
-        extractionModel: model,
+        ...(model ? { extractionModel: model } : {}),
         // One cap for every account this client will ever run. Per-account caps
         // are gone: what the cap protects against is Snapchat rate-limiting the
         // account doing the following, which is not a per-account property.

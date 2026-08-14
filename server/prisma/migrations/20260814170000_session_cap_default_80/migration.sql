@@ -1,0 +1,40 @@
+-- The session cap ships ON, at 80.
+--
+-- READ 20260814120000_session_cap FIRST. That migration added this column and
+-- defaulted it to 2000 -- the settings DTO's ceiling, a number that CANNOT BIND
+-- at any daily cap of 1000 or less, because a rolling window is at most a day so
+-- it straddles at most two of them and two days at the 240 this product ships
+-- with is 480. It was chosen precisely so that applying it changed what every
+-- existing client was handed by nothing at all. Everything that file warns
+-- about is what this file now does deliberately.
+--
+-- WHAT THIS TURNS ON. At 80 per rolling 60 minutes against a daily cap of 240
+-- the cap binds, roughly three times a day: claim() truncates a batch while
+-- remainingToday is still perfectly healthy. That combination -- a short batch
+-- with budget left on the clock -- is what an agent build predating
+-- remainingInWindow reads as "the CRM has nobody left for me", and on that
+-- reading it runs an irreversible pass hiding the people it was not handed from
+-- the emulator's Quick Add roster. Those people are approved, queued, and are
+-- handed out in the next window; they are gone from that device permanently.
+--
+-- SO THIS IS SAFE ONLY IF EVERY AGENT IS ON A BUILD THAT READS
+-- remainingInWindow. snapclient.contract_check is what verifies that, by
+-- checking the claim reply carries the field. Deploy order: agents, then this.
+-- An operator who cannot confirm the fleet sets the cap back to 2000 on the
+-- settings screen, which turns it off again with no migration.
+--
+-- The UPDATE is scoped to rows still holding the 2000 sentinel. A client whose
+-- operator has already chosen a session cap keeps the number they chose; an
+-- unqualified UPDATE would silently overwrite a deliberate setting with a
+-- default, which is the one thing a backfill must never do. 2000 is safe to
+-- treat as "never set" because it is the DTO's ceiling and it cannot bind --
+-- nobody chooses it to mean anything other than off.
+--
+-- Ordering note, the lesson of 2d86416: this states the schema as it is at THIS
+-- point in the sequence and assumes nothing about what is in the table. On a
+-- fresh database it runs after the column exists and before any client row does,
+-- so it updates 0 rows, which is correct rather than a sign it did not work.
+-- Both statements are idempotent and re-applicable over a partial failure of
+-- themselves, so one bad deploy stays one bad deploy rather than a restore.
+ALTER TABLE "clients" ALTER COLUMN "sessionCapPerAccount" SET DEFAULT 80;
+UPDATE "clients" SET "sessionCapPerAccount" = 80 WHERE "sessionCapPerAccount" = 2000;

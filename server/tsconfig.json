@@ -1,9 +1,26 @@
+// The TYPE-CHECKING project: everything a person writes, including test/.
+//
+// `include` used to be src + prisma only, which meant `npx tsc --noEmit` -- the
+// command this repo's checks are built around -- silently skipped the whole
+// test directory. Vitest transpiles those files with esbuild, which strips
+// types without checking them, so nothing in test/ was type-checked by
+// anything. A test calling a service with the wrong shape compiled, ran, and
+// failed at runtime as if the service were broken.
+//
+// Emitting is a different question and has its own file: nest build uses
+// tsconfig.build.json, which narrows this back to src so no test code reaches
+// dist or the container image.
 {
   "compilerOptions": {
     "module": "commonjs",
     "target": "ES2023",
     "lib": ["ES2023"],
-    "declaration": true,
+    // Off here, on in tsconfig.build.json. Declaration emit is a stricter
+    // check than type-checking -- every exported symbol's type must be
+    // NAMEABLE -- and test/sheet-fixture.ts exports a wrapped vitest `describe`
+    // whose type lives in an unnameable @vitest/runner chunk. That is TS4023
+    // on a helper that will never have a .d.ts written for it, so the rule
+    // belongs with the emit and not with the check.
     "removeComments": false,
     "emitDecoratorMetadata": true,
     "experimentalDecorators": true,
@@ -22,6 +39,6 @@
     "noFallthroughCasesInSwitch": true,
     "resolveJsonModule": true
   },
-  "include": ["src/**/*", "prisma/**/*.ts"],
+  "include": ["src/**/*", "prisma/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }

@@ -63,6 +63,12 @@ interface FixtureOptions {
   /** Enabled accounts to create. Use 1 when a test needs every target on one. */
   accounts?: number;
   dailyCap?: number;
+  /** Targets per account per rolling window. Left wide open unless a test says. */
+  sessionCap?: number;
+  /** How long that window is, in minutes. */
+  sessionWindow?: number;
+  /** Which VLM the pipeline is told to use. Pinned unless a test says. */
+  model?: string;
 }
 
 /** Clients this run created, so afterEach can drop exactly those and no others. */
@@ -95,6 +101,22 @@ export async function makeClient(opts: FixtureOptions = {}): Promise<TestClient>
       // that stays the fixture default. The PRODUCT default is 240 and is
       // asserted where it belongs, on the schema, not implied here.
       dailyCapPerAccount: opts.dailyCap ?? 50,
+      // Wide open by default, and that is not laziness. The PRODUCT default is
+      // 40 in a 60-minute window, which is below the cap several of these tests
+      // deliberately claim in one go -- the concurrency tests take 50 rows at
+      // dailyCap 200. Shipping the product default here would make them fail on
+      // the session cap, a limit they were not written to measure, and the
+      // failure would read as a broken claim. Tests about the session cap pass
+      // sessionCap explicitly, exactly as cap tests pass dailyCap.
+      sessionCapPerAccount: opts.sessionCap ?? 2000,
+      sessionWindowMinutes: opts.sessionWindow ?? 60,
+      // Pinned for the same reason the caps are: the e2e suite replays a
+      // recorded reply and asserts the dollar figure it costs, and both are
+      // keyed to this model. Taking the schema default here would make those
+      // tests fail whenever the product's default model changes, as a wrong
+      // cost rather than as a changed default -- and the default itself is
+      // asserted where it belongs, in defaults.int.spec.ts.
+      extractionModel: opts.model ?? 'gemini-3.6-flash',
       personalities: { create: { name, accounts: { create: accountData(name, opts) } } },
     },
     include: { personalities: { include: { accounts: { orderBy: { label: 'asc' } } } } },

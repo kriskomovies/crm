@@ -77,9 +77,13 @@ describeSheet('a client with no filter rules', () => {
 
     const claim = await api.get(`/v1/accounts/${account.id}/targets`);
     expect(claim.body.targets).toEqual([]);
-    // The cap is untouched, which is the tell: this is "no work exists", not
-    // "you have spent today". A client cannot distinguish the two from here.
+    // Neither budget is touched, and that is the tell: this is "no work
+    // exists", not "you have spent today" and not "this window is full". The
+    // three used to be indistinguishable from here, which is what the second
+    // number fixed -- an empty list means something different in each case and
+    // a client backs off differently for each.
     expect(claim.body.remainingToday).toBe(50);
+    expect(claim.body.remainingInWindow).toBe(2000);
   });
 });
 

@@ -95,6 +95,13 @@ export const ROUTES: RouteSpec[] = [
     path: '/api/personalities/:id/targets',
     sample: `/api/personalities/${ABSENT}/targets`,
   },
+  // The ledger as a file. Guarded like its JSON twin, and it has to be: it is
+  // the whole ledger in one response rather than a page of it.
+  {
+    method: 'GET',
+    path: '/api/personalities/:id/targets.csv',
+    sample: `/api/personalities/${ABSENT}/targets.csv`,
+  },
   {
     method: 'POST',
     path: '/api/personalities/:id/targets',
@@ -114,6 +121,14 @@ export const ROUTES: RouteSpec[] = [
     sample: `/api/accounts/${ABSENT}`,
     body: { dailyCap: 10 },
   },
+  // Gives one account today's cap back so the same test can be run twice in a
+  // day. Guarded like everything else here -- it rewrites another tenant's
+  // ledger if it is not.
+  {
+    method: 'POST',
+    path: '/api/accounts/:id/reset-daily-cap',
+    sample: `/api/accounts/${ABSENT}/reset-daily-cap`,
+  },
 
   // SettingsController -- how hard to push every account, one setting per client
   { method: 'GET', path: '/api/settings', sample: '/api/settings' },
@@ -121,7 +136,18 @@ export const ROUTES: RouteSpec[] = [
     method: 'PUT',
     path: '/api/settings',
     sample: '/api/settings',
-    body: { dailyCapPerAccount: 240, followPaceSeconds: 2 },
+    // Every field the DTO declares. forbidNonWhitelisted means a body that
+    // omits one is not exercising the route a screen actually sends to.
+    body: {
+      dailyCapPerAccount: 240,
+      sessionCapPerAccount: 80,
+      sessionWindowMinutes: 60,
+      followPaceSeconds: 2,
+      // A member of EXTRACTION_MODELS, not a placeholder: @IsIn refuses
+      // anything else, and a body the DTO rejects would make the auth matrix
+      // pass on a 400 that never reached the guard's route.
+      extractionModel: 'gemini-3.6-flash',
+    },
   },
 
   // StatsController

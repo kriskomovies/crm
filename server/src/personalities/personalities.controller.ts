@@ -24,6 +24,7 @@ import {
   Post,
   Query,
   Req,
+  Res,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -38,7 +39,59 @@ import {
 } from 'class-validator';
 
 import { ApiKeyGuard } from '../auth/api-key.guard';
+import { CSV_BOM, csvRow } from '../common/csv';
 import { PersonalitiesService } from './personalities.service';
+
+/** The CSV header row, and the order every data row is written in. */
+const CSV_COLUMNS = [
+  'handle',
+  'display name',
+  'nationality',
+  'source',
+  'state',
+  'account',
+  'handed out at',
+  'followed at',
+] as const;
+
+/**
+ * A filename Content-Disposition can carry safely.
+ *
+ * The personality name is operator-typed free text up to 80 characters. A quote
+ * or a newline in it would terminate the header value early, and everything
+ * after it becomes attacker-chosen response headers -- so the name is reduced
+ * to the characters a filename needs rather than escaped.
+ */
+function safeName(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 40) || 'ledger';
+}
+
+/**
+ * Write, and wait if the socket is full.
+ *
+ * `res.write` returning false means the kernel buffer is full and Node is now
+ * queueing the rest in process memory. Ignoring it on a 50,000-row export
+ * rebuilds in the Node heap exactly the whole-ledger-in-memory cost the
+ * streaming export exists to avoid, just one layer further down.
+ *
+ * 'close' is waited on alongside 'drain' because the other outcome of a full
+ * buffer is that the operator cancelled the download. Drain never fires on a
+ * dead socket, so a 'drain'-only wait leaves this promise pending forever, and
+ * with it the generator holding an open cursor over the ledger -- one abandoned
+ * click each.
+ */
+function write(res: any, chunk: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (res.write(chunk)) return resolve();
+    const done = () => {
+      res.off('drain', done);
+      res.off('close', done);
+      resolve();
+    };
+    res.once('drain', done);
+    res.once('close', done);
+  });
+}
 
 class CreatePersonalityDto {
   @IsString()
@@ -123,6 +176,70 @@ export class PersonalitiesController {
     return this.personalities.targets(req.client.id, id, limit, q, state, cursor);
   }
 
+  /**
+   * The same rows as GET :id/targets, as a file.
+   *
+   * A distinct path rather than `?format=csv` on the route above. Changing an
+   * existing route's content type by query parameter corrupts the OpenAPI
+   * document the web client generates from -- one operation, two mutually
+   * exclusive response bodies -- and leaves every existing caller one typo away
+   * from a CSV it will try to JSON.parse.
+   *
+   * @Res without passthrough, as PersonalityLedgerController.register does: the
+   * body is not JSON, and there are no global interceptors (main.ts installs
+   * only the ValidationPipe and CORS) that would otherwise want to wrap it.
+   *
+   * No token in the URL and no fetch on the client side: ApiKeyGuard falls back
+   * to the operator's session cookie, so this is reachable by a plain
+   * <a href download>, which is also what keeps the browser from ever holding
+   * the file in memory.
+   */
+  @Get(':id/targets.csv')
+  async targetsCsv(
+    @Param('id') id: string,
+    @Req() req: any,
+    @Res() res: any,
+    @Query('q') q?: string,
+    @Query('state') state?: string,
+  ) {
+    // Ownership and the state value are settled before a byte is written. Once
+    // headers are out, a 404 can only present as a truncated download.
+    const { name, rows } = await this.personalities.exportTargets(req.client.id, id, q, state);
+
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${safeName(name)}-${state || 'all'}.csv"`,
+    );
+    // No Content-Length is available -- the row count is not known without the
+    // COUNT this export exists to avoid -- so the response is chunked.
+    await write(res, CSV_BOM + csvRow(CSV_COLUMNS));
+    for await (const batch of rows) {
+      // The operator closed the tab. Returning ends the for-await, which closes
+      // the generator and its cursor, rather than paging the rest of the ledger
+      // out of Postgres into a socket nobody is reading.
+      if (res.destroyed) return;
+      let chunk = '';
+      for (const r of batch) {
+        chunk += csvRow([
+          r.handle,
+          r.displayName,
+          r.nationality,
+          r.source,
+          r.state,
+          r.account,
+          // ISO 8601 in UTC. Not a locale-formatted date: the operator's
+          // spreadsheet would reinterpret an ambiguous one by its own locale,
+          // and this at least sorts correctly as text everywhere.
+          r.handedOutAt,
+          r.followedAt,
+        ]);
+      }
+      await write(res, chunk);
+    }
+    res.end();
+  }
+
   @Post(':id/targets')
   attach(@Param('id') id: string, @Body() dto: AttachTargetsDto, @Req() req: any) {
     return this.personalities.attach(req.client.id, id, dto.handles, dto.source ?? 'manual');
@@ -148,5 +265,24 @@ export class AccountsController {
   @Patch(':id')
   update(@Param('id') id: string, @Body() dto: UpdateAccountDto, @Req() req: any) {
     return this.personalities.updateAccount(req.client.id, id, dto);
+  }
+
+  /**
+   * Hand this account today's cap back, so the operator can run the same test
+   * again without waiting for midnight.
+   *
+   * POST rather than a field on the PATCH above. UpdateAccountDto is a
+   * whitelist of things an account IS; this is a thing that HAPPENS to it, and
+   * folding it in would mean a settable `reset: true` that is always false when
+   * read back. No body at all: forbidNonWhitelisted is global, so an empty
+   * object is the correct request and anything else is a 400.
+   *
+   * 200 rather than Nest's default 201 for POST, because nothing was created
+   * and the reply is a report of what changed.
+   */
+  @Post(':id/reset-daily-cap')
+  @HttpCode(200)
+  resetDailyCap(@Param('id') id: string, @Req() req: any) {
+    return this.personalities.resetDailyCap(req.client.id, id);
   }
 }

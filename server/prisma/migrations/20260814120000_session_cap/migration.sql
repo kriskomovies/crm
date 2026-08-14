@@ -1,0 +1,51 @@
+-- A second cap beside the daily one, so 240 a day can be spread across accounts
+-- instead of spent on one in a single run.
+--
+-- A young Snapchat account stops accepting adds at roughly 40 a day in testing.
+-- One account handed the whole day's cap back to back works through the first
+-- 40 and then attempts the remaining 200 against a cooldown that will not lift
+-- -- a spinner that never settles, on a real account. The operator's answer is
+-- to work 40 on account A, rotate to B, then C, and come back to A, and this is
+-- the number that makes the server refuse A the 41st until it is due.
+--
+-- Expressed as a ROLLING WINDOW rather than as a session, because a session is
+-- not something this server can observe: it has no idea when a machine starts
+-- or stops working an account, and a session concept would mean trusting a
+-- machine to declare one. handedOutAt it can observe, so the rule is "no
+-- account is handed more than sessionCapPerAccount targets in any rolling
+-- sessionWindowMinutes". It degenerates to whatever is asked for -- a window of
+-- 1440 makes it a second daily cap; 60 gives the rotation above.
+--
+-- THE DEFAULT IS OFF, AND THAT IS THE LOAD-BEARING PART OF THIS FILE.
+--
+-- 2000 is the ceiling the settings DTO allows and it cannot bind at any daily
+-- cap of 1000 or less: a rolling window is at most a day, so it straddles at
+-- most two of them, and two days at the 240 this product ships with is 480. So
+-- applying this migration changes what every existing client is handed by
+-- nothing at all. The operator turns the cap on from the settings screen when
+-- they are ready, which is also where the warning below is written down.
+--
+-- An earlier draft of this migration used DEFAULT 40, on the reasoning that
+-- every existing row should be capped without a follow-up backfill. That is the
+-- one thing it must not do. A session cap truncates a claim -- fewer rows than
+-- asked for -- while remainingToday is still perfectly healthy, and every
+-- snapclient build older than this change reads that exact combination as proof
+-- the CRM has nobody left to give it. On that proof it runs an irreversible
+-- pass hiding the people it was not handed from the emulator's Quick Add
+-- roster. Those people are approved, queued, and handed out in the next window.
+-- DEFAULT 40 would have done that to every client on this server the instant
+-- the migration ran, with no operator action and nothing in any log naming the
+-- migration as the cause.
+--
+-- The deploy order is therefore: agents first, then the server, then the
+-- setting. snapclient.contract_check verifies an agent is new enough by
+-- checking that the claim reply carries remainingInWindow.
+--
+-- Both columns are NOT NULL DEFAULT, which is metadata-only since PG 11: no
+-- table rewrite and no lock held over a scan of clients.
+--
+-- No index needed. The windowed count is the same query as the daily one with a
+-- different lower bound, and assignments already carries
+-- @@index([accountId, handedOutAt]) from init, which serves both.
+ALTER TABLE "clients" ADD COLUMN "sessionCapPerAccount" INTEGER NOT NULL DEFAULT 2000;
+ALTER TABLE "clients" ADD COLUMN "sessionWindowMinutes" INTEGER NOT NULL DEFAULT 60;

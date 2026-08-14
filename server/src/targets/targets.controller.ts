@@ -1,10 +1,11 @@
 /**
  * "Who should this account follow next", and the result callback.
  *
- * GET is not a read: it CLAIMS targets and counts them against today's cap. An
- * account that polls and then crashes has spent that budget, which is the
- * conservative direction -- the alternative risks the same person being handed
- * to two processes and followed twice.
+ * GET is not a read: it CLAIMS targets and counts them against today's cap and
+ * against this account's rolling session window. An account that polls and then
+ * crashes has spent that budget, which is the conservative direction -- the
+ * alternative risks the same person being handed to two processes and followed
+ * twice.
  */
 import {
   Body,
@@ -89,12 +90,28 @@ export class TargetsController {
     @Req() req: any,
   ) {
     await this.assertOwned(accountId, req.client.id);
-    const targets = await this.targets.claim(accountId, Math.min(limit, 100));
+    const claimed = await this.targets.claim(accountId, Math.min(limit, 100));
     return {
-      targets,
+      targets: claimed.targets,
       // Told explicitly so the client can back off instead of hot-polling an
       // exhausted cap.
       remainingToday: await this.targets.remainingToday(accountId),
+      // The session cap's version of the same number, and the reason it exists
+      // is narrower than "symmetry". A short batch used to have exactly one
+      // explanation once remainingToday was healthy -- the queue ran dry -- and
+      // an agent in the field relies on that to decide it may run an
+      // irreversible pass hiding people from its Quick Add roster. The session
+      // cap gives a short batch a second explanation, so the two budgets are
+      // both stated and a client can require room in BOTH before believing the
+      // queue is what ran out.
+      //
+      // Comes out of the claim rather than from a follow-up query: see
+      // ClaimResult. It is the one number here that cannot be re-derived
+      // afterwards without being wrong in the dangerous direction.
+      remainingInWindow: claimed.remainingInWindow,
+      // How long the window is, so a client that finds it full can sleep for a
+      // share of it instead of hot-polling a metered write until it rolls.
+      sessionWindowMinutes: claimed.sessionWindowMinutes,
       // The operator's pacing setting, delivered where it is about to be used.
       // Every cycle calls this before following, so the machine cannot act on a
       // number older than the batch in front of it -- which is the whole reason

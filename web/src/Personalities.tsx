@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import { api, type Account, type Personality } from './api';
+import { api, type Account, type CapReset, type Personality } from './api';
 import { CapBar } from './ui';
 
 /**
@@ -146,25 +146,52 @@ function PersonalityCard({
           has one.
         </p>
       ) : (
-        <div className="scroll-x">
-          <table>
-            <thead>
-              <tr>
-                <th>account</th>
-                <th className="cap-col">daily cap used</th>
-                <th className="num">queued</th>
-                <th className="num">handed out</th>
-                <th className="num">followed</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {p.accounts.map((a) => (
-                <AccountRow key={a.id} a={a} onChanged={onChanged} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <div className="scroll-x">
+            <table>
+              <thead>
+                <tr>
+                  <th>account</th>
+                  <th className="cap-col">daily cap used</th>
+                  <th className="num">queued</th>
+                  <th className="num">followed</th>
+                  <th className="num">failed today</th>
+                  <th className="num">rejected</th>
+                  <th className="num">already followed</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {p.accounts.map((a) => (
+                  <AccountRow key={a.id} a={a} onChanged={onChanged} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {/* Outside .scroll-x: inside it the explanation would slide away with
+              the columns it explains the moment the table is scrolled. */}
+          <p className="muted small inset">
+            <strong>rejected</strong> belongs to the personality, not the row: it counts the
+            handles the filter dropped, and a dropped handle is never offered to any account,
+            so the same number prints against every one of them.{' '}
+            <strong>already followed</strong> is per account — handles a <em>sibling</em>{' '}
+            account of this personality already followed. One person can be assigned once, so
+            this account can never be handed them; on the tenth account of a personality that
+            is most of what the ledger holds. Between them they are the answer to &ldquo;why is
+            this account getting so few people?&rdquo; — the filter ate them, or a sibling has
+            them already.
+          </p>
+          {/* The one column here that is scoped to a day, so it says so in its
+              own name and again here. Everything else on the row is all-time. */}
+          <p className="muted small inset">
+            <strong>failed today</strong> counts attempts this account made today that missed.
+            The row is not lost: a failure goes back in the queue and is offered again the next
+            day, or immediately after a cap reset. It is <em>not</em> offered again the same day,
+            because the attempt still counts against the cap — which is deliberate, and is what
+            stops an account that is failing every add from burning a whole day&apos;s budget in
+            a couple of minutes.
+          </p>
+        </>
       )}
     </section>
   );
@@ -173,6 +200,13 @@ function PersonalityCard({
 function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  // The reset asks first and then reports, so it needs its own three states.
+  // Kept apart from `err` above so a failed pause does not open the reset panel
+  // and a pending reset does not swallow a pause error.
+  const [asking, setAsking] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetErr, setResetErr] = useState<string | null>(null);
+  const [freed, setFreed] = useState<CapReset | null>(null);
 
   // Pause and resume is all that is left here. The cap moved to Settings: it is
   // one number for the whole client, and twenty rows each offering to edit it
@@ -190,33 +224,154 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
     }
   };
 
+  const reset = async () => {
+    if (resetting) return;
+    setResetting(true);
+    setResetErr(null);
+    try {
+      const out = await api.resetDailyCap(a.id);
+      setAsking(false);
+      // Held on screen rather than folded into a toast: the two counts are the
+      // whole point of the button, and the row behind them refreshes on the
+      // next poll, which would take the only evidence with it.
+      setFreed(out);
+      onChanged();
+    } catch (e) {
+      setResetErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setResetting(false);
+    }
+  };
+
   return (
-    <tr className={a.enabled ? '' : 'off'}>
-      <td data-label="account">
-        <code>{a.label}</code>
-      </td>
-      <td data-label="cap" className="cap-col">
-        <CapBar used={a.handedToday} cap={a.dailyCap} />
-      </td>
-      <td data-label="queued" className="num">
-        {a.queued || ''}
-      </td>
-      <td data-label="handed out" className="num">
-        {a.handedOut || ''}
-      </td>
-      <td data-label="followed" className="num">
-        {a.followed || ''}
-      </td>
-      <td data-label="" className="actions">
-        {err && <span className="error small">{err}</span>}
-        <button
-          className="link"
-          disabled={saving}
-          onClick={() => void save({ enabled: !a.enabled })}
+    <>
+      <tr className={a.enabled ? '' : 'off'}>
+        <td data-label="account">
+          <code>{a.label}</code>
+        </td>
+        <td data-label="cap" className="cap-col">
+          <CapBar used={a.handedToday} cap={a.dailyCap} />
+        </td>
+        <td data-label="queued" className="num">
+          {a.queued || ''}
+        </td>
+        <td data-label="followed" className="num">
+          {a.followed || ''}
+        </td>
+        {/* Today, not all-time, unlike every other count on this row -- a
+            failure is put back in the queue rather than parked in a failed
+            state, so there is nothing to total up over time. The header and the
+            note under the table both carry the scope; the title is for whoever
+            hovers before reading either. */}
+        <td
+          data-label="failed today"
+          className="num"
+          title="attempts today that came back failed — the row went back in the queue and is offered again tomorrow, or immediately after a cap reset"
         >
-          {a.enabled ? 'pause' : 'resume'}
-        </button>
-      </td>
-    </tr>
+          {a.failedToday || ''}
+        </td>
+        {/* Same value on every row of this card, by construction -- a refusal
+            leaves a person with no assignment, so it belongs to no account. The
+            note under the table says so; the title is for whoever hovers first. */}
+        <td
+          data-label="rejected"
+          className="num"
+          title="dropped by the filter — a personality-wide number, the same on every account row"
+        >
+          {a.rejected || ''}
+        </td>
+        <td
+          data-label="already followed"
+          className="num"
+          title="followed under a sibling account of this personality, so this one can never be handed them"
+        >
+          {a.alreadyFollowed || ''}
+        </td>
+        <td data-label="" className="actions">
+          {err && <span className="error small">{err}</span>}
+          <button
+            className="link"
+            disabled={saving}
+            onClick={() => void save({ enabled: !a.enabled })}
+          >
+            {a.enabled ? 'pause' : 'resume'}
+          </button>
+          <button
+            className="link"
+            disabled={resetting}
+            onClick={() => {
+              setFreed(null);
+              setResetErr(null);
+              setAsking((v) => !v);
+            }}
+          >
+            {asking ? 'keep it' : 'reset cap'}
+          </button>
+        </td>
+      </tr>
+
+      {/* A second row rather than something crammed into the actions cell: what
+          this button does needs a sentence before it fires, and a sentence does
+          not fit in a column that is mostly numbers. */}
+      {(asking || freed || resetErr) && (
+        <tr>
+          <td className="rowdetail" data-label="" colSpan={8}>
+            {asking && (
+              <>
+                <p className="rowdetail-p">
+                  Clear today&apos;s handouts on <code>{a.label}</code>? This is for running the
+                  same test twice in one day: the {a.handedToday} target
+                  {a.handedToday === 1 ? '' : 's'} it was given today stop counting against its
+                  cap, so it can be handed up to {a.dailyCap} again. Anyone already followed{' '}
+                  <strong>stays followed</strong> — nothing is un-followed and nobody is offered
+                  twice. Rows a machine claimed and never reported on go back in the queue,
+                  which is the only way they ever become workable again.
+                </p>
+                <p className="rowdetail-p muted">
+                  It resets this server&apos;s bookkeeping, not Snapchat&apos;s. An account that
+                  has already done 200 adds today meets the same add-cooldown after this as
+                  before it — the only difference is that it will now be handed more people to
+                  spend against a cooldown that has not lifted.
+                </p>
+                <div className="rowdetail-actions">
+                  <button className="primary" disabled={resetting} onClick={() => void reset()}>
+                    {resetting ? 'Resetting…' : "Reset today's cap"}
+                  </button>
+                  <button disabled={resetting} onClick={() => setAsking(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+
+            {resetErr && <p className="rowdetail-p error">{resetErr}</p>}
+
+            {freed && !asking && (
+              <p className="rowdetail-p">
+                {freed.cleared === 0 ? (
+                  <>
+                    Nothing to free on <code>{freed.label}</code> — it has not been handed
+                    anyone today.
+                  </>
+                ) : (
+                  <>
+                    Freed {freed.cleared} of today&apos;s handouts on <code>{freed.label}</code>
+                    {freed.requeued > 0 && (
+                      <>
+                        , {freed.requeued} of them claimed by a machine and never reported back
+                      </>
+                    )}
+                    . It can be handed {freed.remainingToday} more today.
+                  </>
+                )}{' '}
+                <button className="link" onClick={() => setFreed(null)}>
+                  dismiss
+                </button>
+              </p>
+            )}
+          </td>
+        </tr>
+      )}
+    </>
   );
 }

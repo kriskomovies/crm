@@ -63,16 +63,30 @@ export class PersonalitiesService {
    * dropdown that the whole stats screen hangs off. Paginating it would make
    * that dropdown lie about what can be filtered on.
    *
-   * Three queries in total, and it stays three however many personalities
-   * exist. The obvious version -- loop the accounts, ask for each account's
-   * queued count, followed count and today's handouts -- is three round trips
-   * per account: at 100 clients x 10 personalities x 10 accounts that is 30,000,
-   * and the dashboard simply never loads. The counts are fetched as two
-   * groupBys and stitched in memory instead.
+   * Four queries in total, and it stays four however many personalities exist.
+   * The obvious version -- loop the accounts, ask for each account's queued
+   * count, followed count and today's handouts -- is three round trips per
+   * account: at 100 clients x 10 personalities x 10 accounts that is 30,000,
+   * and the dashboard simply never loads. The counts are fetched as grouped
+   * aggregates over the whole client and stitched in memory instead.
+   *
+   * `rejected` and `alreadyFollowed` added no query at all, and that was the
+   * condition of adding them. Both are arithmetic on rows this method already
+   * reads -- see personalityTotals.
+   *
+   * `failedToday` is the one column that could not be had that way, and the
+   * rule above is amended rather than quietly broken. The state groupBy carries
+   * no date and the handout groupBy carries no state, so "queued rows that were
+   * reported on today" is not a subtraction over either: it is a fourth grouped
+   * query, on the same @@index([accountId, state]) the second one uses, in the
+   * same Promise.all. What is still refused is the shape that does not scale --
+   * a COUNT per account, which is the pattern PersonalityLedgerController.ledger
+   * records as the cost that grows with the ledger. This is polled every five
+   * seconds by every open dashboard.
    */
   async list(clientId: string) {
     const ofClient = { account: { personality: { clientId } } };
-    const [rows, states, handedToday] = await Promise.all([
+    const [rows, states, handedToday, failedToday] = await Promise.all([
       this.prisma.personality.findMany({
         where: { clientId },
         include: {
@@ -94,31 +108,43 @@ export class PersonalitiesService {
         where: { ...ofClient, handedOutAt: { gte: startOfToday() } },
         _count: { _all: true },
       }),
+      this.prisma.assignment.groupBy({
+        by: ['accountId'],
+        where: { ...ofClient, ...failedTodayWhere() },
+        _count: { _all: true },
+      }),
     ]);
 
-    const byAccount = new Map<string, Record<string, number>>();
-    for (const s of states) {
-      const bucket = byAccount.get(s.accountId) ?? {};
-      bucket[s.state] = s._count._all;
-      byAccount.set(s.accountId, bucket);
-    }
+    const byAccount = groupCounts(states);
     const today = new Map(handedToday.map((h) => [h.accountId, h._count._all]));
+    const missed = new Map(failedToday.map((f) => [f.accountId, f._count._all]));
 
-    return rows.map((p) => ({
-      id: p.id,
-      name: p.name,
-      client: p.client.name,
-      model: p.client.extractionModel,
-      people: p._count.people,
-      accounts: p.accounts.map((a) =>
-        accountView(
-          a,
-          p.client.dailyCapPerAccount,
-          byAccount.get(a.id) ?? {},
-          today.get(a.id) ?? 0,
+    return rows.map((p) => {
+      // The groupBy above spans the whole client, so the per-personality slice
+      // is taken here, off the account list that already came back with the
+      // personality. An account with nothing assigned contributes {} and moves
+      // no total.
+      const counts = p.accounts.map((a) => byAccount.get(a.id) ?? {});
+      const totals = personalityTotals(counts);
+      return {
+        id: p.id,
+        name: p.name,
+        client: p.client.name,
+        model: p.client.extractionModel,
+        people: p._count.people,
+        accounts: p.accounts.map((a, i) =>
+          accountView(
+            a,
+            p.client.dailyCapPerAccount,
+            counts[i],
+            today.get(a.id) ?? 0,
+            missed.get(a.id) ?? 0,
+            totals,
+            p._count.people,
+          ),
         ),
-      ),
-    }));
+      };
+    });
   }
 
   /**
@@ -161,7 +187,9 @@ export class PersonalitiesService {
     const existing = await this.prisma.account.findUnique({
       where: { personalityId_label: { personalityId, label } },
     });
-    if (existing) return { created: false, account: await this.accountWithCounts(existing, cap) };
+    if (existing) {
+      return { created: false, account: await this.accountWithCounts(existing, personalityId, cap) };
+    }
 
     // Scoped to this client, and only to its OTHER personalities: the same
     // handle under two clients is two unrelated Snapchat accounts as far as this
@@ -204,32 +232,60 @@ export class PersonalitiesService {
     }
     // Counted after the branches so both answer through one projection: a caller
     // cannot tell whether it won the race from the shape of what it gets back.
-    return { created, account: await this.accountWithCounts(account, cap) };
+    return { created, account: await this.accountWithCounts(account, personalityId, cap) };
   }
 
   /**
    * One account in the shape `list` nests, counters and all.
    *
-   * Two queries for one account, where `list` does two for every account a
+   * Four queries for one account, where `list` does four for every account a
    * client has. That is the right trade in opposite directions: this runs once
    * per registration, and a registration must answer with live numbers because
    * the agent adopts this object and starts its first cycle from it without a
    * second fetch.
+   *
+   * The groupBy is scoped to the PERSONALITY rather than to this account, even
+   * though only one account's row is returned. `alreadyFollowed` and `rejected`
+   * are both properties of the whole personality -- see personalityTotals -- so
+   * counting this account alone would report 0 for both on a machine that is
+   * the tenth account of a personality holding thousands of taken handles.
+   * One personality runs about ten accounts, so the groupBy is the same size.
    */
-  private async accountWithCounts(a: AccountRow, dailyCap: number): Promise<AccountView> {
-    const [states, handedToday] = await Promise.all([
+  private async accountWithCounts(
+    a: AccountRow,
+    personalityId: string,
+    dailyCap: number,
+  ): Promise<AccountView> {
+    const [people, states, handedToday, failedToday] = await Promise.all([
+      this.prisma.person.count({ where: { personalityId } }),
       this.prisma.assignment.groupBy({
-        by: ['state'],
-        where: { accountId: a.id },
+        by: ['accountId', 'state'],
+        where: { account: { personalityId } },
         _count: { _all: true },
       }),
       this.prisma.assignment.count({
         where: { accountId: a.id, handedOutAt: { gte: startOfToday() } },
       }),
+      // Per account, unlike the groupBy above: failedToday is this account's own
+      // number, where alreadyFollowed and rejected are the personality's. A
+      // fourth query here rather than a fourth column on that groupBy, because
+      // the groupBy has no date in it and adding one would change what the other
+      // two counters mean.
+      this.prisma.assignment.count({
+        where: { accountId: a.id, ...failedTodayWhere() },
+      }),
     ]);
-    const counts: Record<string, number> = {};
-    for (const s of states) counts[s.state] = s._count._all;
-    return accountView(a, dailyCap, counts, handedToday);
+    const byAccount = groupCounts(states);
+    const totals = personalityTotals([...byAccount.values()]);
+    return accountView(
+      a,
+      dailyCap,
+      byAccount.get(a.id) ?? {},
+      handedToday,
+      failedToday,
+      totals,
+      people,
+    );
   }
 
   /**
@@ -254,6 +310,95 @@ export class PersonalitiesService {
       label: updated.label,
       dailyCap: account.personality.client.dailyCapPerAccount,
       enabled: updated.enabled,
+    };
+  }
+
+  /**
+   * Give an account today's cap back, so the same test can be run twice in one
+   * day.
+   *
+   * Both caps are metered by counting handedOutAt rather than by a counter
+   * column, so "reset the cap" means exactly "clear today's handedOutAt stamps
+   * on this account". That also frees the rolling session window, which counts
+   * the same column with a nearer lower bound -- one button, both caps, and
+   * worth saying on the button.
+   *
+   * WHAT IT DOES NOT RESET: anything on the Snapchat side. This is the CRM's
+   * bookkeeping. An account that really did 200 adds today and is reset will be
+   * handed a fresh dailyCap and will spend it against a cooldown that will not
+   * lift, which is the exact spinner the session cap exists to prevent. It is
+   * for re-running a test, not for getting more follows out of an account.
+   *
+   * Two statements, and the split is the whole safety of it:
+   *
+   *   handed_out rows  go back to `queued` AND lose the stamp. Clearing the
+   *                    stamp alone would strand them permanently -- claim()
+   *                    only ever picks state='queued', so nothing would hand
+   *                    them out again and nothing would count them either.
+   *                    They are rows an agent claimed and never reported.
+   *   everything else  loses the stamp only. `state` is not in that update's
+   *                    `data` at all, which is what makes it structurally
+   *                    unable to un-follow anyone or to resurrect a `skipped`
+   *                    row -- skips are terminal because re-offering one loops.
+   *
+   * A followed row losing its stamp cannot be re-handed regardless: claim()
+   * filters on state='queued'. The stamp is only its share of today's budget.
+   *
+   * `resultAt` and `note` are touched by neither, so the failed-today column and
+   * the diagnostics an agent wrote survive a reset. A row that failed today
+   * still reads as failed today afterwards, which is correct -- the attempt
+   * really happened.
+   */
+  async resetDailyCap(clientId: string, accountId: string) {
+    // 404 not 403, scoped through the personality, exactly as updateAccount
+    // does: an account id is a uuid the operator UI prints, and the id is the
+    // secret.
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, personality: { clientId } },
+      select: {
+        id: true,
+        label: true,
+        personality: { select: { client: { select: { dailyCapPerAccount: true } } } },
+      },
+    });
+    if (!account) throw new NotFoundException('account not found');
+
+    const since = startOfToday();
+    const freed = await this.prisma.$transaction(async (tx) => {
+      // The same row lock claim() takes, on the same account row. claim()
+      // serialises on FOR UPDATE OF a and counts handedOutAt underneath it; a
+      // reset that skips the lock can interleave with a poll already in flight,
+      // so rows get stamped after being cleared -- the freed budget spent again
+      // before the operator has read the number -- or cleared after being
+      // stamped, and the remainingInWindow the agent was just handed is wrong.
+      // Same lock, same footprint: this account only, no sibling touched.
+      await tx.$queryRaw`SELECT id FROM accounts WHERE id = ${accountId} FOR UPDATE`;
+
+      const requeued = await tx.assignment.updateMany({
+        where: { accountId, state: 'handed_out', handedOutAt: { gte: since } },
+        data: { state: 'queued', handedOutAt: null },
+      });
+      const rest = await tx.assignment.updateMany({
+        // The rows above are already excluded twice over -- their stamp is now
+        // NULL, which fails the `gte`, and their state is no longer handed_out
+        // -- so the two counts cannot overlap.
+        where: { accountId, state: { not: 'handed_out' }, handedOutAt: { gte: since } },
+        data: { handedOutAt: null },
+      });
+      return { requeued: requeued.count, cleared: requeued.count + rest.count };
+    });
+
+    return {
+      id: account.id,
+      label: account.label,
+      // Two numbers because they answer two questions: `cleared` is how many of
+      // today's cap slots came back, `requeued` is how many rows were stuck
+      // mid-flight and are workable again.
+      ...freed,
+      // Exact rather than re-counted: nothing on this account is left holding a
+      // stamp inside today, and the lock was held while that became true.
+      handedToday: 0,
+      remainingToday: account.personality.client.dailyCapPerAccount,
     };
   }
 
@@ -460,23 +605,8 @@ export class PersonalitiesService {
   ) {
     await this.assertExists(clientId, personalityId);
     const take = pageSize(limit);
-    // Bounded before it reaches the database. `contains` becomes a LIKE with
-    // the caller's text inlined between two wildcards, and neither the planner
-    // nor the pattern matcher enjoys a megabyte of it.
-    const needle = q?.trim().slice(0, MAX_SEARCH);
     const people = await this.prisma.person.findMany({
-      where: {
-        personalityId,
-        ...(needle
-          ? {
-              OR: [
-                { handle: { contains: needle.toLowerCase() } },
-                { displayName: { contains: needle, mode: 'insensitive' as const } },
-              ],
-            }
-          : {}),
-        ...(state ? { assignment: { state: assignmentState(state) } } : {}),
-      },
+      where: ledgerWhere(personalityId, q, state),
       orderBy: { id: 'asc' },
       // Fetch one extra to learn whether another page exists without a second
       // count query over the whole table.
@@ -504,9 +634,102 @@ export class PersonalitiesService {
         // questions, and only the first was answerable from the UI.
         note: p.assignment?.note ?? null,
         account: p.assignment?.account.label ?? null,
+        handedOutAt: p.assignment?.handedOutAt ?? null,
+        followedAt: followedAt(p.assignment),
       })),
       nextCursor,
     };
+  }
+
+  /**
+   * The same rows `targets` pages, as one stream, for the CSV export.
+   *
+   * Two things are deliberate here and both are about size. The rows arrive a
+   * batch at a time through the same keyset cursor the page uses, so the server
+   * holds one batch however large the ledger is -- a personality running for a
+   * month is tens of thousands of people, and `findMany` with no take is the
+   * version of this that falls over on the operator it was built for. And the
+   * export exists at all on the server rather than in the browser because the
+   * client version is 100 sequential requests at the 500-row API ceiling, held
+   * in memory twice, where a page that fails at request 73 produces a CSV that
+   * is silently short and looks complete.
+   *
+   * EXPORT_BATCH is not pageSize(): 500 is the ceiling on what an API caller may
+   * ask for in one response, which has nothing to do with how many rows this
+   * walks internally per round trip.
+   *
+   * Ordered [createdAt desc, id desc] rather than `targets`' id asc. It is the
+   * order TargetsService.ledger already walks, it puts the newest handles at the
+   * top of the file where the operator wants them, and it is served by the
+   * existing people(personalityId, createdAt) index -- where id asc has no index
+   * to walk and makes the database sort the personality per batch.
+   *
+   * Validation and the ownership check run BEFORE the generator, not inside it:
+   * a 404 or a 400 raised after the first byte is written cannot be turned back
+   * into a status code, and the operator would download a truncated file instead
+   * of seeing an error.
+   */
+  async exportTargets(
+    clientId: string,
+    personalityId: string,
+    q?: string,
+    state?: string,
+  ): Promise<{ name: string; rows: AsyncGenerator<ExportRow[]> }> {
+    // Not assertExists: this needs the personality's NAME for the filename, and
+    // the per-account cap that one returns means nothing to an export. Same
+    // scoping, same 404-rather-than-403 -- the id is the secret.
+    const personality = await this.prisma.personality.findFirst({
+      where: { id: personalityId, clientId },
+      select: { name: true },
+    });
+    if (!personality) throw new NotFoundException('personality not found');
+
+    const where = ledgerWhere(personalityId, q, state);
+    return { name: personality.name, rows: this.exportPages(where) };
+  }
+
+  private async *exportPages(where: Prisma.PersonWhereInput): AsyncGenerator<ExportRow[]> {
+    let cursor: string | undefined;
+    for (;;) {
+      const rows = await this.prisma.person.findMany({
+        where,
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: EXPORT_BATCH,
+        ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+        select: {
+          id: true,
+          handle: true,
+          displayName: true,
+          nationality: true,
+          source: true,
+          assignment: {
+            select: {
+              state: true,
+              handedOutAt: true,
+              resultAt: true,
+              account: { select: { label: true } },
+            },
+          },
+        },
+      });
+      if (rows.length === 0) return;
+      yield rows.map((p) => ({
+        handle: p.handle,
+        displayName: p.displayName,
+        nationality: p.nationality,
+        source: p.source,
+        state: p.assignment?.state ?? null,
+        account: p.assignment?.account.label ?? null,
+        handedOutAt: p.assignment?.handedOutAt ?? null,
+        followedAt: followedAt(p.assignment),
+      }));
+      // A short batch is the last one. Terminating on the row count rather than
+      // on a COUNT of the whole personality is the same reason slicePage reads
+      // one row past a page: the count is the query that gets slower as the
+      // ledger grows.
+      if (rows.length < EXPORT_BATCH) return;
+      cursor = rows[rows.length - 1].id;
+    }
   }
 
   /**
@@ -541,6 +764,69 @@ function assignmentState(raw: string): AssignmentState {
   return state;
 }
 
+/**
+ * The where-clause `targets` pages and `exportTargets` streams.
+ *
+ * One function because the export must show exactly the rows the screen showed
+ * -- an export that quietly searched or filtered differently from the list
+ * above it is a file the operator has no way to notice is wrong.
+ */
+function ledgerWhere(
+  personalityId: string,
+  q?: string,
+  state?: string,
+): Prisma.PersonWhereInput {
+  // Bounded before it reaches the database. `contains` becomes a LIKE with the
+  // caller's text inlined between two wildcards, and neither the planner nor
+  // the pattern matcher enjoys a megabyte of it.
+  const needle = q?.trim().slice(0, MAX_SEARCH);
+  return {
+    personalityId,
+    ...(needle
+      ? {
+          OR: [
+            { handle: { contains: needle.toLowerCase() } },
+            { displayName: { contains: needle, mode: 'insensitive' as const } },
+          ],
+        }
+      : {}),
+    ...(state ? { assignment: { state: assignmentState(state) } } : {}),
+  };
+}
+
+/**
+ * When the follow actually happened, and null when it did not happen.
+ *
+ * `resultAt` is stamped by report() for followed, skipped AND failed, so
+ * serving it under the name "followed at" would date a refusal as an
+ * acquisition -- on the one screen whose entire purpose is the people that were
+ * acquired.
+ */
+function followedAt(assignment: { state: AssignmentState; resultAt: Date | null } | null): Date | null {
+  return assignment?.state === 'followed' ? assignment.resultAt : null;
+}
+
+/** One row of the CSV, and of the followed list the CSV is an export of. */
+export interface ExportRow {
+  handle: string;
+  displayName: string;
+  nationality: string | null;
+  source: string;
+  state: AssignmentState | null;
+  account: string | null;
+  handedOutAt: Date | null;
+  followedAt: Date | null;
+}
+
+/**
+ * Rows per round trip while streaming the export.
+ *
+ * Deliberately not pageSize(). MAX_LIMIT is the ceiling on what one API
+ * response may carry, which says nothing about how many rows this walks
+ * internally between writes to a socket.
+ */
+const EXPORT_BATCH = 1000;
+
 /** The columns every account projection needs. Less than a full Account row. */
 type AccountRow = { id: string; label: string; enabled: boolean };
 
@@ -550,8 +836,69 @@ export interface AccountView extends AccountRow {
   handedToday: number;
   remainingToday: number;
   queued: number;
-  handedOut: number;
   followed: number;
+  /**
+   * People this personality holds that no account was given -- the filter
+   * declined them, and a drop is a bare `continue` in PipelineService.filter, so
+   * "no assignment row" IS refused. A property of the PERSONALITY, so it reads
+   * the same on every account row of one card; that repetition is correct and
+   * is the first time the silent-drop count appears anywhere in the UI.
+   */
+  rejected: number;
+  /**
+   * People a SIBLING account of this personality already followed. UNIQUE
+   * (personId) means this account can never be handed them -- that is the
+   * dedupe the product sells -- so this is the honest answer to "why is this
+   * account getting so few people". On the tenth account of a personality it is
+   * most of the ledger.
+   */
+  alreadyFollowed: number;
+  /**
+   * Attempts this account made TODAY that missed, and are queued to be tried
+   * again. Not a count of `state = 'failed'` -- see failedTodayWhere for why
+   * that column would read 0 forever on a live deployment.
+   *
+   * The name carries "today" and has to. Every other counter on this row is
+   * all-time, so a today-scoped one sitting among them unmarked would be a lie
+   * by adjacency; `handedToday` set that precedent. Today is also the scope the
+   * number is useful at, because the question it answers is "how much of this
+   * run missed", asked by the same operator who is about to press reset.
+   */
+  failedToday: number;
+}
+
+/**
+ * The two numbers an account's new columns are arithmetic on, tallied once per
+ * personality from state counts that were already fetched.
+ */
+interface PersonalityTotals {
+  /** Followed under every account of this personality, this one included. */
+  followed: number;
+  /** Assignment rows under every account of it, whatever state they are in. */
+  assigned: number;
+}
+
+/** groupBy(accountId, state) rows folded into one state->count record per account. */
+function groupCounts(
+  rows: { accountId: string; state: AssignmentState; _count: { _all: number } }[],
+): Map<string, Record<string, number>> {
+  const byAccount = new Map<string, Record<string, number>>();
+  for (const r of rows) {
+    const bucket = byAccount.get(r.accountId) ?? {};
+    bucket[r.state] = r._count._all;
+    byAccount.set(r.accountId, bucket);
+  }
+  return byAccount;
+}
+
+function personalityTotals(counts: Record<string, number>[]): PersonalityTotals {
+  let followed = 0;
+  let assigned = 0;
+  for (const c of counts) {
+    followed += c.followed ?? 0;
+    for (const n of Object.values(c)) assigned += n;
+  }
+  return { followed, assigned };
 }
 
 /**
@@ -568,18 +915,64 @@ function accountView(
   dailyCap: number,
   counts: Record<string, number>,
   handedToday: number,
+  failedToday: number,
+  totals: PersonalityTotals,
+  people: number,
 ): AccountView {
+  const followed = counts.followed ?? 0;
   return {
     id: a.id,
     label: a.label,
     dailyCap,
     enabled: a.enabled,
+    // Still here, and load-bearing twice over: remainingToday below is computed
+    // from it, and it is what the daily-cap bar draws -- the safety feature, and
+    // a different column from the `handed out` state count that this change
+    // removed. Only the state count went.
     handedToday,
     remainingToday: Math.max(0, dailyCap - handedToday),
     queued: counts.queued ?? 0,
-    handedOut: counts.handed_out ?? 0,
-    followed: counts.followed ?? 0,
+    followed,
+    // Every Person either has exactly one Assignment (UNIQUE personId) or none,
+    // so the people with none are the difference. Math.max guards one invariant
+    // the database does not enforce: an Assignment's account always belongs to
+    // its Person's personality, which holds by construction -- allocate() writes
+    // to the sheet's own account and queueAll() only picks accounts
+    // `where: { personalityId }` -- and would make this subtraction negative if
+    // it ever broke. Known residual: deleting an Account cascades its
+    // assignments away, and those people then read as rejected.
+    rejected: Math.max(0, people - totals.assigned),
+    // Followed by any account of this personality, minus the ones this account
+    // followed itself. No query of its own: the state counts of every sibling
+    // were already fetched to fill in `queued` and `followed`.
+    alreadyFollowed: totals.followed - followed,
+    failedToday,
   };
+}
+
+/**
+ * Rows this account attempted today and missed.
+ *
+ * NOT `state: 'failed'`. AssignmentState has that value and nothing in the
+ * server ever writes it: TargetsService.report is the only writer of a result,
+ * and it stores a failure as `state: 'queued'` so the row is retried rather than
+ * lost. A column counting `failed` would read 0 on every real deployment
+ * forever, and be non-zero only against seeded data -- which is worse than not
+ * shipping the column, because 0 looks like good news.
+ *
+ * What a failure actually leaves is this pair, and the pair is exclusive to it:
+ * allocate() creates rows queued with no resultAt, claim() moves queued to
+ * handed_out and never writes resultAt, and report() is the only writer of
+ * resultAt and the only path back to queued. So `queued AND resultAt set` means
+ * "reported failed", and nothing else produces it.
+ *
+ * `note` is deliberately not part of the test even though report() writes it on
+ * the same statement: ReportDto.note is @IsOptional(), so an agent that reports
+ * a failure with no text would be dropped from the count and the number would
+ * silently undershoot. resultAt is unconditional.
+ */
+function failedTodayWhere() {
+  return { state: AssignmentState.queued, resultAt: { gte: startOfToday() } };
 }
 
 /** Local midnight. Caps reset by the operator's day, not UTC's. */

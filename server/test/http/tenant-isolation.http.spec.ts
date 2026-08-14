@@ -207,6 +207,25 @@ describe('writes scoped to the calling client', () => {
     expect(account.enabled).toBe(true);
   });
 
+  it('POST /api/accounts/:id/reset-daily-cap 404s and leaves their ledger alone', async () => {
+    const { a, b } = await twoTenants();
+    // b is already carrying seven queued rows; three of them go out to b's own
+    // machine, so there is in-flight work for a to damage.
+    await api.get(`/v1/accounts/${b.accountId}/targets?limit=3`, { auth: b.auth });
+
+    const res = await api.post(`/api/accounts/${b.accountId}/reset-daily-cap`, { auth: a.auth });
+
+    expect(res.status).toBe(404);
+    // The route rewrites assignment rows, so an unscoped version does not merely
+    // leak -- it requeues another tenant's in-flight work and hands them a fresh
+    // cap on accounts they are already running.
+    expect(
+      await prisma.assignment.count({
+        where: { accountId: b.accountId, state: 'handed_out', handedOutAt: { not: null } },
+      }),
+    ).toBe(3);
+  });
+
   it('PUT /api/settings cannot reach another tenant, only the caller', async () => {
     const { a, b } = await twoTenants();
 

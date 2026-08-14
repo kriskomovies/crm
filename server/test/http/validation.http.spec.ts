@@ -355,6 +355,39 @@ describe('PUT /api/settings', () => {
       { dailyCapPerAccount: '50' },
       'dailyCapPerAccount must be an integer number',
     ],
+    [
+      'a negative session cap',
+      { sessionCapPerAccount: -1 },
+      'sessionCapPerAccount must not be less than 0',
+    ],
+    [
+      'a session cap over 2000',
+      { sessionCapPerAccount: 2001 },
+      'sessionCapPerAccount must not be greater than 2000',
+    ],
+    [
+      'a fractional session cap',
+      { sessionCapPerAccount: 1.5 },
+      'sessionCapPerAccount must be an integer number',
+    ],
+    // Zero is legal on both CAPS -- it is the brake -- but not on the window.
+    // A window of no length counts nothing, so the cap beside it could never
+    // bind: the pair would read as a configured limit while being off.
+    [
+      'a window of no length',
+      { sessionWindowMinutes: 0 },
+      'sessionWindowMinutes must not be less than 1',
+    ],
+    [
+      'a window longer than a day',
+      { sessionWindowMinutes: 1441 },
+      'sessionWindowMinutes must not be greater than 1440',
+    ],
+    [
+      'a window sent as a string',
+      { sessionWindowMinutes: '60' },
+      'sessionWindowMinutes must be an integer number',
+    ],
     ['a negative pace', { followPaceSeconds: -1 }, 'followPaceSeconds must not be less than 0'],
     [
       'a pace over an hour',
@@ -362,11 +395,39 @@ describe('PUT /api/settings', () => {
       'followPaceSeconds must not be greater than 3600',
     ],
     ['an unknown property', { dailyCap: 10 }, 'property dailyCap should not exist'],
+    // The model is a CLOSED set, and this is the whole reason. The value is
+    // handed to the gateway as the model name, so anything it does not
+    // recognise is accepted here and then fails every extraction this client
+    // uploads -- one gateway error per sheet, with nothing on the settings
+    // screen suggesting the model name is the cause.
+    [
+      'a model that does not exist',
+      { extractionModel: 'not-a-model' },
+      'extractionModel must be one of the following values',
+    ],
+    // A REAL model, with a real price row, that must never be selectable: it
+    // emitted one avatar description for 94 of 99 faces, so every sheet it reads
+    // is thrown away by the distinct-cues guard. Being priced is not being fit
+    // to run, which is why the option list is not derived from PRICES.
+    [
+      'a real model that is not on the list',
+      { extractionModel: 'gpt-4.1-mini' },
+      'extractionModel must be one of the following values',
+    ],
+    [
+      'a model sent as a number',
+      { extractionModel: 3 },
+      'extractionModel must be one of the following values',
+    ],
   ])('rejects %s', async (_label, body, blames) => {
     const c = await ctx();
     expectRejected(await api.request('PUT', '/api/settings', { auth: c.auth, body }), blames);
     const client = await prisma.client.findUniqueOrThrow({ where: { id: c.client.id } });
     expect(client.dailyCapPerAccount).toBe(50);
+    // The whole body is refused, so a rejected session field cannot have left
+    // the other three half-written.
+    expect(client.sessionCapPerAccount).toBe(2000);
+    expect(client.sessionWindowMinutes).toBe(60);
   });
 
   it.each([0, 2000])('accepts the boundary cap %i', async (dailyCapPerAccount) => {
@@ -379,16 +440,118 @@ describe('PUT /api/settings', () => {
     expect(res.body.dailyCapPerAccount).toBe(dailyCapPerAccount);
   });
 
-  it('takes one field without disturbing the other', async () => {
+  it.each([0, 2000])('accepts the boundary session cap %i', async (sessionCapPerAccount) => {
+    const c = await ctx();
+    const res = await api.request('PUT', '/api/settings', {
+      auth: c.auth,
+      body: { sessionCapPerAccount },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.sessionCapPerAccount).toBe(sessionCapPerAccount);
+  });
+
+  // 1 is the floor because 0 disables the cap silently; 1440 is a day, which is
+  // the setting that turns the session cap into a second daily cap.
+  it.each([1, 1440])('accepts the boundary window %i', async (sessionWindowMinutes) => {
+    const c = await ctx();
+    const res = await api.request('PUT', '/api/settings', {
+      auth: c.auth,
+      body: { sessionWindowMinutes },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body.sessionWindowMinutes).toBe(sessionWindowMinutes);
+  });
+
+  it('takes one field without disturbing the others', async () => {
     const c = await ctx();
     const res = await api.request('PUT', '/api/settings', {
       auth: c.auth,
       body: { followPaceSeconds: 9 },
     });
     expect(res.status).toBe(200);
-    // A screen that edits one number must not have to restate the other and
-    // risk stamping a stale value over someone else's edit.
-    expect(res.body).toMatchObject({ followPaceSeconds: 9, dailyCapPerAccount: 50 });
+    // A screen that edits one number must not have to restate the other three
+    // and risk stamping a stale value over someone else's edit.
+    expect(res.body).toMatchObject({
+      followPaceSeconds: 9,
+      dailyCapPerAccount: 50,
+      sessionCapPerAccount: 2000,
+      sessionWindowMinutes: 60,
+    });
+  });
+
+  it('round-trips both new numbers through GET', async () => {
+    const c = await ctx();
+    const saved = await api.request('PUT', '/api/settings', {
+      auth: c.auth,
+      body: { sessionCapPerAccount: 40, sessionWindowMinutes: 90 },
+    });
+    expect(saved.body).toMatchObject({
+      saved: true,
+      sessionCapPerAccount: 40,
+      sessionWindowMinutes: 90,
+    });
+
+    // Read back over the wire rather than out of the database: a field that
+    // reaches the DTO but not the GET select saves and then reads as unchanged,
+    // which on the screen is indistinguishable from a save that never happened.
+    const read = await api.get('/api/settings', { auth: c.auth });
+    expect(read.body).toEqual({
+      dailyCapPerAccount: 50,
+      sessionCapPerAccount: 40,
+      sessionWindowMinutes: 90,
+      followPaceSeconds: 2,
+      // The fixture's pin, not the schema default -- that one is asserted in
+      // defaults.int.spec.ts, where a bare client row can be built.
+      extractionModel: 'gemini-3.6-flash',
+      models: ['gemini-3-flash-preview-nothinking', 'gemini-3.6-flash'],
+    });
+  });
+
+  it.each(['gemini-3-flash-preview-nothinking', 'gemini-3.6-flash'])(
+    'accepts %s and reads it back',
+    async (extractionModel) => {
+      const c = await ctx();
+      const saved = await api.request('PUT', '/api/settings', {
+        auth: c.auth,
+        body: { extractionModel },
+      });
+      expect(saved.status).toBe(200);
+      expect(saved.body).toMatchObject({ saved: true, extractionModel });
+
+      const read = await api.get('/api/settings', { auth: c.auth });
+      expect(read.body.extractionModel).toBe(extractionModel);
+      // Nothing else moved: a screen that edits the model must not restate the
+      // four pacing numbers to do it.
+      expect(read.body).toMatchObject({
+        dailyCapPerAccount: 50,
+        sessionCapPerAccount: 2000,
+        sessionWindowMinutes: 60,
+        followPaceSeconds: 2,
+      });
+    },
+  );
+
+  it('serves the option list, so the screen never carries its own copy', async () => {
+    // The vocabulary travels with the value, as the rules screen's origin list
+    // does. A dropdown built from a hardcoded array drifts out of step with what
+    // @IsIn accepts, and the symptom is a 400 on an option the screen offered.
+    const c = await ctx();
+    const read = await api.get('/api/settings', { auth: c.auth });
+    expect(read.body.models).toEqual(['gemini-3-flash-preview-nothinking', 'gemini-3.6-flash']);
+    expect(read.body.models).toContain(read.body.extractionModel);
+  });
+
+  it('refuses a reply spread straight back into a save', async () => {
+    // Pinning the consequence of serving `models` on a PUT-able-looking object.
+    // It is the server's vocabulary, not the client's, so forbidNonWhitelisted
+    // names it -- which is the correct failure, and is a trap worth knowing
+    // about before someone writes save({ ...settings }).
+    const c = await ctx();
+    const read = await api.get('/api/settings', { auth: c.auth });
+    expectRejected(
+      await api.request('PUT', '/api/settings', { auth: c.auth, body: read.body }),
+      'property models should not exist',
+    );
   });
 });
 

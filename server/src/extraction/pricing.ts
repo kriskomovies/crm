@@ -26,6 +26,26 @@ export interface TokenPrice {
 
 export const PRICES: Record<string, TokenPrice> = {
   'gemini-3.6-flash': { inPerM: 1.02, outPerM: 6.13, measured: true },
+  // FITTED FROM ONE RUN, not solved from a bill like the row above, and that is
+  // the difference `measured: false` is recording.
+  //
+  // vlm_eval/FORMAT-AB.md, arm V1: 1,904 prompt + 7,459 completion tokens billed
+  // $0.0233/sheet. vlm_eval/pricing.py:81 publishes $0.40/$2.40 for this model,
+  // which predicts (1904*0.40 + 7459*2.40)/1e6 = $0.0187 against that -- about
+  // 20% light against a real charge -- so it is not copied. Input is held at the
+  // published $0.40/M and output solved for the remainder:
+  //   ($0.0233 - 1904*0.40/1e6) / 7459 * 1e6 = $3.02/M
+  // which reproduces $0.02329/sheet and $0.235/1000 profiles against the
+  // document's $0.236. One run is not a bill: re-derive with
+  // vlm_eval/measure_models.py before anyone quotes this number at a client.
+  //
+  // Residual worth knowing: refresh() below replaces any row the gateway
+  // publishes a non-zero ratio for, and it keeps measured values only where the
+  // gateway publishes nothing (see the `continue` at the unlisted branch). If
+  // apimart ever lists this model, this fitted row is replaced by the published
+  // one we already know is 20% light. That is the documented policy rather than
+  // a bug, but it is the one row where the policy loses accuracy.
+  'gemini-3-flash-preview-nothinking': { inPerM: 0.4, outPerM: 3.02, measured: false },
   'gemini-3-pro-preview': { inPerM: 2.0, outPerM: 12.0 },
   'gemini-3.5-flash': { inPerM: 1.5, outPerM: 9.0 },
   'gemini-2.5-flash': { inPerM: 0.3, outPerM: 2.5 },
