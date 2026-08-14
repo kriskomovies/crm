@@ -192,15 +192,8 @@ export function Settings() {
           />
         </label>
         <span className="muted small">
-          the most any <strong>one</strong> account is handed in the window below. Enforced
-          here too, in the same handout and against the same lock as the daily cap — a machine
-          running an older build that ignores it still gets nothing. Defaults to{' '}
-          <strong>80</strong>, which against a daily cap in the hundreds actually{' '}
-          <em>binds</em>: a machine works 80 on one account and is then handed nothing more for
-          it until the window rolls, so it moves to the next account instead of standing there.
-          That is the rotation — one machine across A, B and C rather than one account worked
-          to a standstill while the others sit idle. It is not the machine choosing to move on;
-          there is simply nothing left here to give it.
+          the most any <strong>one</strong> account is handed inside the window below. Enforced
+          here. This is what lets a machine work one account, then move to the next.
         </span>
       </div>
 
@@ -218,11 +211,7 @@ export function Settings() {
           />
         </label>
         <span className="muted small">
-          how long that window is, and it <strong>rolls</strong>: this server cannot see when a
-          machine starts or stops working an account, so it counts what the account was handed
-          in the last N minutes rather than tracking a session. Budget comes back gradually as
-          old handouts age out, not all at once at the end. 1440 makes the number above a second
-          daily cap.
+          how long that window is, rolling. 1440 turns the session cap into a second daily cap.
         </span>
       </div>
 
@@ -266,82 +255,20 @@ export function Settings() {
           </select>
         </label>
         <span className="muted small">
-          which model reads every sheet this client sends. The list comes from the server and
-          is closed there too — a model that is not on it is not merely unsaved, it would fail
-          every extraction.
+          which model reads every sheet. The list is closed server-side — anything else would
+          fail every extraction.
         </span>
       </div>
 
-      {/* The trade-off goes above the Save button, not in a tooltip and not
-          after the fact: the cheap model is the default, and an operator who
-          never opens this screen should still meet these numbers the first time
-          they do. */}
-      <div className="inset">
-        <p className="muted small">
-          The default is the cheap one, and it costs accuracy. Scored on the same keyed 99
-          profiles, of which <strong>5 are women</strong>:
-        </p>
-        <div className="scroll-x">
-          <table>
-            <thead>
-              <tr>
-                <th>model</th>
-                <th className="num">women let through</th>
-                <th className="num">$ per sheet</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td data-label="model">
-                  <code>gemini-3.6-flash</code>
-                </td>
-                <td data-label="women let through" className="num">
-                  1 of 5
-                </td>
-                <td data-label="$ per sheet" className="num">
-                  $0.1282
-                </td>
-              </tr>
-              <tr>
-                <td data-label="model">
-                  <code>gemini-3-flash-preview-nothinking</code>
-                </td>
-                <td data-label="women let through" className="num">
-                  3 of 5
-                </td>
-                <td data-label="$ per sheet" className="num">
-                  $0.0233
-                </td>
-              </tr>
-              <tr className="off">
-                <td data-label="model">
-                  <code>gemini-3-flash-preview-nothinking</code>, 33 profiles at a time{' '}
-                  <span className="muted">— not built</span>
-                </td>
-                <td data-label="women let through" className="num">
-                  2 of 5
-                </td>
-                <td data-label="$ per sheet" className="num">
-                  $0.0264
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-        <p className="muted small">
-          Selecting the cheap model <strong>today</strong> buys the middle row —{' '}
-          <strong>3 of the 5 women get through</strong> — not the bottom one. The bottom row is
-          the same model reading a sheet in bands of 33 profiles instead of all 99 at once, and
-          banding is not implemented: the pipeline sends one image per sheet. It is in the table
-          because it is what the cheap option could cost, not what it costs now.
-        </p>
-        <p className="muted small">
-          A woman let through is not caught later — she is queued, handed out and followed like
-          anyone else, and nothing downstream looks at the face again. Both numbers come from
-          one scored run of 99 profiles, so five is the whole sample; treat the gap between 1
-          and 3 as real and the exact figures as approximate.
-        </p>
-      </div>
+      {/* One line, not the scored table that was here. The table was three
+          rows and three paragraphs of caveat for a decision taken once; the
+          number that actually changes the decision is the leak count, and it
+          fits on a line. The full matrix lives in vlm_eval/FORMAT-AB.md. */}
+      <p className="muted small inset">
+        Cheap model: <strong>3 of 5</strong> women let through and $0.0233 a sheet, against{' '}
+        <strong>1 of 5</strong> and $0.1282 for <code>gemini-3.6-flash</code>. One scored run of
+        99 profiles, so five is the whole sample.
+      </p>
 
       <div className="row-form inset">
         <button className="primary" onClick={() => void save()} disabled={!dirty || busy}>
@@ -353,11 +280,7 @@ export function Settings() {
 
       <p className="muted small inset">
         A young account hits Snapchat&apos;s add-cooldown at roughly 40 adds a day in testing.
-        One account given a whole day&apos;s cap in a single run spends the tail of it
-        attempting adds against a cooldown that will not lift; the session cap is what spreads
-        them out, and the daily cap is what bounds them. These three numbers are the rate limit
-        that keeps an account alive, not a throughput knob — if accounts start getting limited,
-        this is the first screen to come back to.
+        These are the rate limit that keeps an account alive, not a throughput knob.
       </p>
     </section>
   );

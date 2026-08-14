@@ -153,11 +153,22 @@ function PersonalityCard({
                 <tr>
                   <th>account</th>
                   <th className="cap-col">daily cap used</th>
+                  {/* The three counts that need explaining carry it in a title
+                      rather than in prose under the table. The prose was two
+                      paragraphs, and it repeated under every personality card --
+                      three personalities meant reading it three times to learn
+                      nothing new. */}
                   <th className="num">queued</th>
                   <th className="num">followed</th>
-                  <th className="num">failed today</th>
-                  <th className="num">rejected</th>
-                  <th className="num">already followed</th>
+                  <th className="num" title="Attempts this account made today that missed. Not lost: the row goes back in the queue and is offered again tomorrow, or immediately after a cap reset. It is not retried the same day, because the attempt still counts against the cap.">
+                    failed today
+                  </th>
+                  <th className="num" title="Handles the filter dropped. A dropped handle is never offered to any account, so this belongs to the personality and prints the same against every row.">
+                    rejected
+                  </th>
+                  <th className="num" title="Handles a sibling account of this personality already followed. One person can be assigned once, so this account can never be handed them.">
+                    already followed
+                  </th>
                   <th></th>
                 </tr>
               </thead>
@@ -168,29 +179,6 @@ function PersonalityCard({
               </tbody>
             </table>
           </div>
-          {/* Outside .scroll-x: inside it the explanation would slide away with
-              the columns it explains the moment the table is scrolled. */}
-          <p className="muted small inset">
-            <strong>rejected</strong> belongs to the personality, not the row: it counts the
-            handles the filter dropped, and a dropped handle is never offered to any account,
-            so the same number prints against every one of them.{' '}
-            <strong>already followed</strong> is per account — handles a <em>sibling</em>{' '}
-            account of this personality already followed. One person can be assigned once, so
-            this account can never be handed them; on the tenth account of a personality that
-            is most of what the ledger holds. Between them they are the answer to &ldquo;why is
-            this account getting so few people?&rdquo; — the filter ate them, or a sibling has
-            them already.
-          </p>
-          {/* The one column here that is scoped to a day, so it says so in its
-              own name and again here. Everything else on the row is all-time. */}
-          <p className="muted small inset">
-            <strong>failed today</strong> counts attempts this account made today that missed.
-            The row is not lost: a failure goes back in the queue and is offered again the next
-            day, or immediately after a cap reset. It is <em>not</em> offered again the same day,
-            because the attempt still counts against the cap — which is deliberate, and is what
-            stops an account that is failing every add from burning a whole day&apos;s budget in
-            a couple of minutes.
-          </p>
         </>
       )}
     </section>

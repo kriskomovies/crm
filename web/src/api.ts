@@ -13,7 +13,7 @@ export type Account = {
   /** Handles this personality holds that no account was ever given, because the
    *  filter dropped them. A drop leaves a person and no assignment, so this is a
    *  property of the personality and reads the same on every one of its account
-   *  rows -- see the note under the table on Personalities. */
+   *  rows. */
   rejected: number;
   /** Followed under a SIBLING account of the same personality. One person can
    *  hold one assignment, so these are handles this account can never be given:
@@ -333,7 +333,10 @@ function targetPage(
   opts: { q?: string; state?: string; cursor?: string },
   signal?: AbortSignal,
 ): Promise<Page<Target>> {
-  const p = new URLSearchParams({ limit: '100' });
+  // 50, not 100: both live personalities hold fewer than 100 followed, so a
+  // page of 100 meant Load more never appeared and the list looked unpaged
+  // right up until the first personality that would have hung the browser.
+  const p = new URLSearchParams({ limit: '50' });
   if (opts.q) p.set('q', opts.q);
   if (opts.state) p.set('state', opts.state);
   if (opts.cursor) p.set('cursor', opts.cursor);
