@@ -193,6 +193,41 @@ export async function addPeople(
   return handles;
 }
 
+/**
+ * People with a nationality each, written straight into the ledger.
+ *
+ * `null` is a bucket like any other here, and it is the one that matters: it is
+ * what normCountry stores for every non-answer, so it is what the rules screen
+ * has to be able to count and target. Buckets rather than a flat count because
+ * the thing under test is the distribution -- "welsh 2, english 3, unread 4" is
+ * the shape /api/rules serves back as its option list.
+ */
+export async function addPeopleByNationality(
+  personalityId: string,
+  buckets: { nationality: string | null; count: number }[],
+): Promise<void> {
+  const rows: {
+    personalityId: string;
+    handle: string;
+    displayName: string;
+    nationality: string | null;
+  }[] = [];
+  for (const b of buckets) {
+    // The handle carries the bucket so a failure names the row that caused it,
+    // and stays inside the plausible shape so the rows look like real ones.
+    const tag = (b.nationality ?? 'unread').replace(/[^a-z]/g, '') || 'unread';
+    for (let i = 0; i < b.count; i++) {
+      rows.push({
+        personalityId,
+        handle: `${tag}_${i}`.slice(0, 15),
+        displayName: `${tag} ${i}`,
+        nationality: b.nationality,
+      });
+    }
+  }
+  await prisma.person.createMany({ data: rows });
+}
+
 /** People plus a queued assignment each, oldest first, all on one account. */
 export async function queueTargets(
   personalityId: string,

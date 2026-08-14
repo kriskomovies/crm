@@ -19,7 +19,16 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { addPeople, dropFixtures, makeClient, prisma, queueTargets, TestClient } from '../fixtures';
+import { NO_NATIONALITY } from '../../src/extraction/normalize';
+import {
+  addPeople,
+  addPeopleByNationality,
+  dropFixtures,
+  makeClient,
+  prisma,
+  queueTargets,
+  TestClient,
+} from '../fixtures';
 import { bootHarness, Harness } from './app';
 import { ABSENT } from './routes';
 
@@ -552,6 +561,208 @@ describe('PUT /api/settings', () => {
       await api.request('PUT', '/api/settings', { auth: c.auth, body: read.body }),
       'property models should not exist',
     );
+  });
+});
+
+/**
+ * The origin list, which is the one option list on this server that CANNOT be a
+ * constant.
+ *
+ * /api/settings serves `models` from a closed set and the test above pins that.
+ * Origins are the opposite case and the difference is worth stating: nothing
+ * normalises Person.nationality onto a vocabulary -- normCountry lowercases,
+ * truncates and stores whatever the model said -- so the only list that cannot
+ * drift is the one read back out of the ledger. The constant that used to live
+ * in rules.controller.ts had drifted: production held welsh, hebrew, japanese
+ * and eleven more that no checkbox could name, and PUT silently dropped them.
+ */
+describe('GET/PUT /api/rules — the origin list comes from the data', () => {
+  /** welsh 2, english 3, and 4 people the model gave no nationality for. */
+  async function withNationalities(c: Ctx) {
+    await addPeopleByNationality(c.personalityId, [
+      { nationality: 'welsh', count: 2 },
+      { nationality: 'english', count: 3 },
+      { nationality: null, count: 4 },
+    ]);
+  }
+
+  it('serves what the extractor returned, with a count each, commonest first', async () => {
+    const c = await ctx();
+    await withNationalities(c);
+    const read = await api.get('/api/rules', { auth: c.auth });
+    expect(read.status).toBe(200);
+    // Ordered by count so the answer to "is this worth ticking" is at the top,
+    // and the null bucket is spelled with the sentinel a rule can name.
+    expect(read.body.options.origins).toEqual([
+      { value: NO_NATIONALITY, count: 4 },
+      { value: 'english', count: 3 },
+      { value: 'welsh', count: 2 },
+    ]);
+  });
+
+  it('offers the sentinel even when every person has a reading', async () => {
+    // It is a structural bucket, not a value the data happens to contain. At
+    // zero it is still the only way to say "the ones we could not read", and
+    // omitting it would make that unsavable on a young client.
+    const c = await ctx();
+    await addPeopleByNationality(c.personalityId, [{ nationality: 'welsh', count: 1 }]);
+    const read = await api.get('/api/rules', { auth: c.auth });
+    expect(read.body.options.origins).toContainEqual({ value: NO_NATIONALITY, count: 0 });
+  });
+
+  it('reports a legacy `unknown` tick as its own option, matching nobody', async () => {
+    /**
+     * What a client already out there sees on the deploy.
+     *
+     * 'unknown' was in the ORIGINS constant this endpoint used to serve, so a
+     * saved rule can hold it -- inert, because normCountry stores no such value
+     * and the filter compared nothing for a person with none. It stays inert
+     * (extraction.spec and rules.e2e pin the filter half), and the honest way to
+     * SAY so on this endpoint is a separate option at count 0, which the screen
+     * marks `none now`. The four unread people are under the sentinel instead.
+     *
+     * The alternative -- reusing 'unknown' as the sentinel -- would have shown
+     * this same rule as targeting 4 people it had never targeted, and started
+     * forwarding them, with nobody touching the screen.
+     */
+    const c = await ctx();
+    await withNationalities(c);
+    await prisma.filterRule.create({
+      data: {
+        clientId: c.client.id,
+        position: 1,
+        presentsAs: ['man'],
+        countries: ['english', 'unknown'],
+        minConfidence: 'low',
+        action: 'forward',
+      },
+    });
+
+    const read = await api.get('/api/rules', { auth: c.auth });
+    expect(read.body.options.origins).toContainEqual({ value: 'unknown', count: 0 });
+    expect(read.body.options.origins).toContainEqual({ value: NO_NATIONALITY, count: 4 });
+    expect(read.body.rule.countries).toEqual(['english', 'unknown']);
+    // Savable as-is, so an unrelated edit on the same screen cannot 400 on a
+    // value the operator never chose and cannot see the origin of.
+    const saved = await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: { presentsAs: ['man'], countries: read.body.rule.countries, minConfidence: 'low' },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body.rule.countries).toEqual(['english', 'unknown']);
+  });
+
+  it('accepts a country no constant ever listed, and reads it back', async () => {
+    // The whole bug in one request. `welsh` used to be filtered out against a
+    // 16-string constant, saved without it, and reported as `{ saved: true }`.
+    const c = await ctx();
+    await withNationalities(c);
+    const saved = await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: { presentsAs: ['man'], countries: ['welsh', NO_NATIONALITY], minConfidence: 'low' },
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({ saved: true });
+    expect(saved.body.rule.countries).toEqual(['welsh', NO_NATIONALITY]);
+
+    const read = await api.get('/api/rules', { auth: c.auth });
+    expect(read.body.rule.countries).toEqual(['welsh', NO_NATIONALITY]);
+  });
+
+  it('refuses a country nothing has returned, and NAMES it', async () => {
+    // A 400 rather than the old silent omission. Silence here is the worst
+    // available failure: the box comes back unticked, which reads as "the click
+    // did not register", so the operator ticks it again. No number of attempts
+    // works and nothing says why.
+    const c = await ctx();
+    await withNationalities(c);
+    expectRejected(
+      await api.request('PUT', '/api/rules', {
+        auth: c.auth,
+        body: { presentsAs: [], countries: ['welsh', 'klingon'], minConfidence: 'low' },
+      }),
+      'klingon',
+    );
+    // And nothing was saved -- a rejected value must not leave the other half
+    // of the list applied.
+    const read = await api.get('/api/rules', { auth: c.auth });
+    expect(read.body.rule.countries).not.toContain('welsh');
+  });
+
+  it('keeps a saved country that has vanished from the ledger', async () => {
+    // Retention deletes rows; a model stops answering `welsh`. Either way the
+    // option must survive as long as the rule uses it, or the screen would show
+    // an untargeted-looking rule while the filter went on honouring the value.
+    const c = await ctx();
+    await withNationalities(c);
+    await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: { presentsAs: [], countries: ['welsh'], minConfidence: 'low' },
+    });
+    await prisma.person.deleteMany({
+      where: { personalityId: c.personalityId, nationality: 'welsh' },
+    });
+
+    const read = await api.get('/api/rules', { auth: c.auth });
+    // Count 0 is the honest number: nobody in the ledger matches it today.
+    expect(read.body.options.origins).toContainEqual({ value: 'welsh', count: 0 });
+    expect(read.body.rule.countries).toEqual(['welsh']);
+    // Still savable, so an unrelated edit to the same rule cannot silently drop
+    // it on the way through.
+    const resaved = await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: { presentsAs: ['man'], countries: ['welsh'], minConfidence: 'low' },
+    });
+    expect(resaved.status).toBe(200);
+    expect(resaved.body.rule.countries).toEqual(['welsh']);
+  });
+
+  it('folds a legacy capitalised value onto the option the screen offers', async () => {
+    // The filter has folded case since the day it was found matching nothing,
+    // so 'English' targeted english correctly -- but the SCREEN ticks a chip by
+    // exact string, so a rule saved as 'English' rendered as an unticked
+    // `english (3)` on a page that was forwarding english.
+    const c = await ctx();
+    await withNationalities(c);
+    const saved = await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: { presentsAs: [], countries: ['English', 'english'], minConfidence: 'low' },
+    });
+    // Canonicalised AND deduped: two spellings of one bucket is not two buckets.
+    expect(saved.body.rule.countries).toEqual(['english']);
+  });
+
+  it('lets a brand new client save the default rule it was just shown', async () => {
+    // A client with no FilterRule and no people is served DEFAULT_RULE, whose
+    // countries are `['english']`. If the option list were built from the
+    // ledger alone that default would be unsavable -- the first PUT off an
+    // untouched screen would 400 on a value the screen itself supplied.
+    const c = await ctx();
+    const read = await api.get('/api/rules', { auth: c.auth });
+    expect(read.body.rule.countries).toEqual(['english']);
+    expect(read.body.options.origins).toContainEqual({ value: 'english', count: 0 });
+    const saved = await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: {
+        presentsAs: read.body.rule.presentsAs,
+        countries: read.body.rule.countries,
+        minConfidence: read.body.rule.minConfidence,
+      },
+    });
+    expect(saved.status).toBe(200);
+  });
+
+  it('still says what an empty list means', async () => {
+    // Unchanged and load-bearing: empty is "any", not "none", and it is not the
+    // sentinel. Every permissive rule in the e2e suite is spelled this way.
+    const c = await ctx();
+    await withNationalities(c);
+    const saved = await api.request('PUT', '/api/rules', {
+      auth: c.auth,
+      body: { presentsAs: [], countries: [], minConfidence: 'low' },
+    });
+    expect(saved.body.rule.countries).toEqual([]);
+    expect(saved.body.note).toBe('no countries selected: every origin is forwarded');
   });
 });
 

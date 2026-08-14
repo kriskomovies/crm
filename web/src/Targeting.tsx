@@ -1,18 +1,26 @@
 /**
  * Who gets forwarded to the follow queue.
  *
- * The vocabulary comes from the server rather than being hardcoded here, so the
- * boxes can never offer an origin the extractor does not actually return --
- * which is precisely how the old rule managed to match nothing at all.
+ * The origin boxes are built from this client's own ledger. Neither side ever
+ * hardcoded them, but the server did, and a fixed list of 16 capitalised names
+ * had drifted from what the model actually returns: on the live client it could
+ * not offer `welsh` (19 people), `hebrew`, `japanese` or `romanian` at all, and
+ * the `unknown` box it did offer matched nobody, because a person with no
+ * nationality read is stored as null. Second-largest bucket, 112 people, no way
+ * to target them.
  *
- * "English" is one option, not four. Three runs over the real 99-profile sheet
- * put 64-66 names in that bucket and named a specific anglophone country for at
- * most seven; British came up once and Australian never. Offering US/UK/CA/AU
- * separately would be four checkboxes that return nothing.
+ * So the counts ride along with the values. "Is this worth ticking" is now
+ * answerable here rather than on the stats tab.
+ *
+ * The box that targets that bucket is `no nationality read`, and it is a NEW
+ * option, not the old `unknown` one repaired -- see NO_NATIONALITY in api.ts
+ * for why reusing the string would have changed what live rules forward on
+ * deploy. A rule still holding the dead tick shows it as `unknown`, count 0,
+ * marked `none now`: untick it, or leave it, but it forwards nobody either way.
  */
 import { useEffect, useState } from 'react';
 
-import { api, type Rule, type RuleOptions } from './api';
+import { NO_NATIONALITY, api, type Rule, type RuleOptions } from './api';
 
 export function Targeting() {
   const [options, setOptions] = useState<RuleOptions | null>(null);
@@ -34,8 +42,19 @@ export function Targeting() {
   if (err) return <div className="card error">{err}</div>;
   if (!options || !rule) return <div className="card muted">Loading…</div>;
 
+  // The filter folds case (pipeline.service.ts, since 566f1a7 "Country filter
+  // matched case-sensitively and forwarded nobody") and the option list now
+  // carries whatever casing the data holds, which is lowercase. A rule saved
+  // before that still holds 'English', and an exact includes() would render its
+  // chip UNTICKED while it was quietly forwarding every english-reading name --
+  // a targeting screen lying about what it is targeting. Fold on both sides.
+  const has = (list: string[], value: string) =>
+    list.some((v) => v.toLowerCase() === value.toLowerCase());
+
   const toggle = (list: string[], value: string) =>
-    list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
+    has(list, value)
+      ? list.filter((v) => v.toLowerCase() !== value.toLowerCase())
+      : [...list, value];
 
   async function save() {
     if (!rule) return;
@@ -82,20 +101,36 @@ export function Targeting() {
         <h3>Name origin</h3>
         <div className="chips">
           {options.origins.map((o) => (
-            <label key={o} className={rule.countries.includes(o) ? 'chip on' : 'chip'}>
+            <label
+              key={o.value}
+              className={has(rule.countries, o.value) ? 'chip on' : 'chip'}
+              title={
+                o.value === NO_NATIONALITY
+                  ? 'The model read a name but could not place it. Minimum ' +
+                    'confidence does not apply to these — there is no reading ' +
+                    'to grade.'
+                  : undefined
+              }
+            >
               <input
                 type="checkbox"
-                checked={rule.countries.includes(o)}
-                onChange={() => setRule({ ...rule, countries: toggle(rule.countries, o) })}
+                checked={has(rule.countries, o.value)}
+                onChange={() => setRule({ ...rule, countries: toggle(rule.countries, o.value) })}
               />
-              {o}
+              {o.value === NO_NATIONALITY ? 'no nationality read' : o.value}
+              {/* A count the server did not send is left blank rather than
+                  printed as 0, which would read as "gone" on every box. */}
+              {o.count !== null && (
+                <span className={o.count === 0 ? 'n gone' : 'n'}>
+                  {o.count === 0 ? 'none now' : o.count}
+                </span>
+              )}
             </label>
           ))}
         </div>
         <p className="muted small">
-          <b>English</b> means the name reads as generically English — it does not
-          distinguish American, British, Canadian or Australian, because a name
-          does not. Selecting nothing here forwards <b>every</b> origin.
+          From your own sheets, commonest first. Nothing ticked forwards{' '}
+          <b>every</b> origin.
         </p>
 
         <h3>Skin tone</h3>
@@ -137,6 +172,18 @@ export function Targeting() {
           evidence and the model says so honestly: 80 of 99 entries on the
           reference sheet come back low, and a <i>medium</i> bar passed just one
           English-reading man in sixty-five.
+        </p>
+        {/* Said on the page, not just in the code. The bar grades the origin
+            reading, so it cannot grade a person who has none — those forward on
+            the origin boxes alone, at every setting. Without this line the
+            control silently means something different for one of the boxes
+            above, which is the same class of defect as the option list that
+            could not name what the model returned. */}
+        <p className="muted small">
+          It grades the origin reading itself, so it does not apply to{' '}
+          <b>no nationality read</b> — there is nothing there to grade. Those
+          people forward whenever the boxes above match them, whichever bar is
+          set here.
         </p>
 
         <div className="row">

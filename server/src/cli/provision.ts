@@ -71,7 +71,13 @@ export async function main(): Promise<void> {
   // English, and minConfidence low. Both measured, not guessed: three runs over
   // the golden sheet put 64-66 of 99 names in the English bucket, and 80 of 99
   // come back low confidence -- a medium bar passes 1 English-reading man in 65.
-  const countries = list('countries', 'English');
+  //
+  // Lowercase, like everything normCountry stores and like the options
+  // /api/rules serves. The pipeline folds case so 'English' filtered correctly,
+  // but the Targeting screen ticks its chips by exact string, so a provisioned
+  // client opened its rules page to an unticked `english` chip on a rule that
+  // was forwarding english.
+  const countries = list('countries', 'english');
   // Empty rather than a hardcoded model name, so an unflagged run takes the
   // column default and there is one place that decides which model is default.
   // A literal here would have gone on provisioning 3.6-flash long after the

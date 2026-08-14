@@ -98,6 +98,74 @@ export function normCountry(raw: string | null | undefined): string | null {
 }
 
 /**
+ * The country a rule names to target people whose nationality was never read.
+ *
+ * Two properties make a string usable here, and the obvious candidate --
+ * 'unknown', which is what this shipped as until review -- has only the first.
+ *
+ * 1. NO PERSON CAN HOLD IT. `normCountry` above is the only writer of
+ *    Person.nationality, and it maps '', 'n/a', 'none' and 'unknown' to null
+ *    before storage, so any of those four is safe from shadowing a real
+ *    reading. Nothing else is: normCountry lowercases and truncates but does
+ *    not strip punctuation, so a model answering "(none)" stores `(none)`
+ *    verbatim, and `__none__` would store likewise. Exactly four strings are
+ *    un-storable, and extraction.spec.ts guards the mapping by name.
+ *
+ * 2. NO ALREADY-SAVED RULE CAN HOLD IT. This one is about the deploy, not the
+ *    data, and it is what rules out 'unknown'. 'unknown' was a member of the
+ *    ORIGINS constant that used to live in rules.controller.ts: the Targeting
+ *    screen rendered it as a chip and the old PUT accepted it, so a client can
+ *    have had it ticked for months. All that time it matched NOBODY, because
+ *    the filter required a non-null nationality before it compared anything.
+ *    Reusing that same string as the sentinel would have flipped every such
+ *    rule from forwarding nobody to forwarding the whole unread bucket on the
+ *    deploy that fixed it, with no operator touching the screen -- on `kris
+ *    agency` that is 112 people against 572 english, a ~20% jump in queue
+ *    volume against a fixed dailyCapPerAccount, on a population nobody opted
+ *    into. 'none' was never in ORIGINS, so the old PUT dropped it and no screen
+ *    ever offered it; a rule that still holds the legacy 'unknown' goes on
+ *    matching nobody, and now says so out loud -- /api/rules reports it as an
+ *    option with a count of 0 and the screen marks it `none now`.
+ *
+ * It does not collide with "any" either: "any" is `countries.length === 0`, a
+ * property of the array. The sentinel is a MEMBER of the array. The two live in
+ * different places and compose freely.
+ *
+ * Measured on production (`kris agency`): 112 people had no nationality read --
+ * the second-largest bucket -- and NO rule could reach them.
+ */
+export const NO_NATIONALITY = 'none';
+
+/**
+ * Does this person's nationality satisfy a rule's country list?
+ *
+ * Pure, and separated from PipelineService.filter so the three cases that used
+ * to be provable only against Postgres -- empty means any, the sentinel matches
+ * exactly the unread, a sentinel beside real countries matches both -- are unit
+ * testable.
+ *
+ * Case-insensitive, and it has to be. The model answers "Italian" while a rule
+ * is typed "italian", and an exact includes() silently matched NOTHING -- a
+ * filter that forwards nobody looks identical to a filter nobody has triggered
+ * yet, so it can run for days before anyone asks why the queue is empty.
+ * Measured on the 99-profile golden sheet: 17 men matched with case folding, 0
+ * without.
+ */
+export function countryMatches(
+  countries: readonly string[],
+  nationality: string | null | undefined,
+): boolean {
+  // Empty = any, including the people with no reading at all. Unchanged, and it
+  // must stay unchanged: every e2e client's permissive baseline is spelled this
+  // way, and repurposing the empty list for the sentinel would silently narrow
+  // every rule that means "everyone".
+  if (countries.length === 0) return true;
+  const wanted = countries.map((c) => c.trim().toLowerCase());
+  if (!nationality) return wanted.includes(NO_NATIONALITY);
+  return wanted.includes(nationality.trim().toLowerCase());
+}
+
+/**
  * The closed skin-tone vocabulary. The first seven form an ordinal scale from
  * pale to dark-brown; the last three are off-scale -- `placeholder` for a
  * faceless silhouette, `stylised` for a flat unnatural colour, and `unreadable`

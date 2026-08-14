@@ -20,6 +20,7 @@ import {
   cleanDisplayName,
   combinePresents,
   confidenceAtLeast,
+  countryMatches,
   isPlausibleHandle,
   normCountry,
   normHandle,
@@ -376,23 +377,17 @@ export class PipelineService {
       for (const rule of rules) {
         const presents = fromDb(p.presentsAs);
         if (rule.presentsAs.length && !rule.presentsAs.includes(presents)) continue;
-        // Case-insensitive, and it has to be. The model answers "Italian" while
-        // a rule is typed "italian", and an exact includes() silently matched
-        // NOTHING -- a filter that forwards nobody looks identical to a filter
-        // nobody has triggered yet, so it can run for days before anyone asks
-        // why the queue is empty. Measured on the 99-profile golden sheet: 17
-        // men matched with case folding, 0 without.
-        if (
-          rule.countries.length &&
-          !(
-            p.nationality &&
-            rule.countries.some(
-              (c) => c.toLowerCase() === p.nationality!.toLowerCase(),
-            )
-          )
-        ) {
-          continue;
-        }
+        // Empty = any; a named country is matched case-insensitively; and a
+        // person with NO nationality read matches the empty list, or a list
+        // that names the sentinel, and nothing else. See countryMatches -- the
+        // case folding and the sentinel's collision safety are argued there.
+        //
+        // This used to require `p.nationality &&` before comparing, which made
+        // the 112 people on `kris agency` with no reading unreachable by every
+        // checkbox the screen offered -- including the `unknown` one, which is
+        // why that string could not be reused as the sentinel. See
+        // NO_NATIONALITY.
+        if (!countryMatches(rule.countries, p.nationality)) continue;
         // Skin tone is a plain membership test, case-insensitive like country.
         // Empty list = any, and a person with no read tone only matches the
         // "any" rule -- naming tones excludes the ones the model could not read.
@@ -412,9 +407,38 @@ export class PipelineService {
         // really satisfied. Dropped, and the first-match-wins break still
         // applies: a later rule does not get to re-answer a question this one
         // already matched on.
-        if (!confidenceAtLeast(p.nationalityConf, rule.minConfidence)) break;
+        //
+        // `p.nationality &&` because the floor grades a READING, and a person
+        // with no reading has none to grade. confidenceAtLeast ranks a null at
+        // 0, so without this even the default `low` bar drops the whole unread
+        // bucket -- and drops it arbitrarily, since a model that attaches `low`
+        // to its own non-answer (all six do in golden-99.reply.txt) gets
+        // through while one that omits the field does not. Nothing reports the
+        // difference, so the sentinel would look like it worked.
+        //
+        // Scoped to the PERSON, not to "this rule named the sentinel", which is
+        // how it first shipped. That version made `countries: []` a strict
+        // SUBSET of `countries: ['none']`: at a `medium` floor the empty list
+        // dropped every unread person while the one-box list forwarded all of
+        // them, so ticking one MORE box widened the result past "any" -- while
+        // the PUT note and the Targeting screen both go on calling the empty
+        // list "every origin". First-match-wins compounded it: an "any" rule at
+        // position 0 broke here and killed a following ['none'] rule for the
+        // same person. The invariant this restores is that adding a country to
+        // a rule can only ever add people.
+        if (p.nationality && !confidenceAtLeast(p.nationalityConf, rule.minConfidence)) {
+          break;
+        }
         if (rule.action === 'forward') {
-          decisions.push({ personId: p.id, reason: `${presents}, ${p.nationality}` });
+          // `?? 'no nationality read'` rather than interpolating the null. This
+          // string is served to the machine on the claim and written to the CSV
+          // export, so the alternative reads as the literal text "man, null" to
+          // whoever opens it. Invisible until now only because these people
+          // never reached allocate.
+          decisions.push({
+            personId: p.id,
+            reason: `${presents}, ${p.nationality ?? 'no nationality read'}`,
+          });
         }
         break; // first matching rule wins
       }

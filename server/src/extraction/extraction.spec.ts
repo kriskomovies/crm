@@ -22,8 +22,10 @@ import {
   cleanDisplayName,
   combinePresents,
   confidenceAtLeast,
+  countryMatches,
   emojiKey,
   isPlausibleHandle,
+  NO_NATIONALITY,
   normCountry,
   normHandle,
   signalsDisagree,
@@ -157,15 +159,139 @@ describe('presents_as combination', () => {
 });
 
 describe('country and confidence', () => {
-  it('treats unknown as absent so it can never match a target list', () => {
+  /**
+   * This is the load-bearing assertion under the whole sentinel design, not a
+   * spelling test.
+   *
+   * `NO_NATIONALITY` is the value a rule names to target people whose
+   * nationality was never read, and it is safe ONLY because normCountry -- the
+   * single writer of Person.nationality -- maps that exact string to null
+   * before storage. So no person can hold it and the sentinel cannot shadow a
+   * real reading. The day someone drops 'none' from this line, the sentinel
+   * silently starts meaning "people the model literally answered 'none' for"
+   * as well, and the two populations become impossible to tell apart.
+   */
+  it('never stores the sentinel, which is what makes it usable as one', () => {
+    expect(normCountry(NO_NATIONALITY)).toBeNull();
+    expect(normCountry('none')).toBeNull();
+    expect(normCountry('NONE')).toBeNull();
+    // The other three that null, for the same reason: each is a non-answer.
     expect(normCountry('unknown')).toBeNull();
+    expect(normCountry('n/a')).toBeNull();
+    expect(normCountry('')).toBeNull();
+    // And what a real answer does: lowercased and trimmed, not vetted against
+    // any list. This is why the rules screen cannot carry a closed vocabulary.
     expect(normCountry('  Italian ')).toBe('italian');
+    expect(normCountry('Welsh')).toBe('welsh');
+    // Punctuation survives, which is why '(none)' would NOT have been a safe
+    // sentinel -- a model answering it stores it verbatim.
+    expect(normCountry('(none)')).toBe('(none)');
   });
 
   it('ranks confidence floors', () => {
     expect(confidenceAtLeast('high', 'medium')).toBe(true);
     expect(confidenceAtLeast('low', 'medium')).toBe(false);
     expect(confidenceAtLeast(undefined, 'low')).toBe(false);
+  });
+});
+
+/**
+ * The country predicate, which is the one part of PipelineService.filter that
+ * can be asked questions without a database.
+ *
+ * All four cases below were live bugs or live near-misses on `kris agency`:
+ * welsh was unreachable because it was not in a constant, the 112 people with
+ * no reading were unreachable by construction, and the empty list is what every
+ * "forward everything" rule in the suite is spelled as.
+ */
+describe('countryMatches', () => {
+  it('treats an empty list as any, including the people with no reading', () => {
+    expect(countryMatches([], 'welsh')).toBe(true);
+    expect(countryMatches([], null)).toBe(true);
+  });
+
+  it('matches a value the model returned that no constant ever listed', () => {
+    // 19 people in production. Before this, no checkbox could reach them and
+    // submitting the value silently saved a rule without it.
+    expect(countryMatches(['welsh'], 'welsh')).toBe(true);
+    expect(countryMatches(['welsh'], 'english')).toBe(false);
+    expect(countryMatches(['hebrew', 'japanese'], 'japanese')).toBe(true);
+  });
+
+  it('folds case in both directions', () => {
+    // The rule is typed one way and the model answers another. An exact
+    // includes() matched nothing and looked exactly like an untriggered filter.
+    expect(countryMatches(['English'], 'english')).toBe(true);
+    expect(countryMatches(['english'], 'English')).toBe(true);
+    expect(countryMatches([' Italian '], 'italian')).toBe(true);
+  });
+
+  it('matches exactly the unread bucket when the rule names the sentinel', () => {
+    expect(countryMatches([NO_NATIONALITY], null)).toBe(true);
+    expect(countryMatches([NO_NATIONALITY], undefined)).toBe(true);
+    // And nobody else. A person WITH a reading is not unread however weak the
+    // reading was -- that is what minConfidence is for.
+    expect(countryMatches([NO_NATIONALITY], 'english')).toBe(false);
+    expect(countryMatches([NO_NATIONALITY], 'welsh')).toBe(false);
+  });
+
+  /**
+   * The deploy guard, named for the rule it protects.
+   *
+   * 'unknown' was a member of the deleted ORIGINS constant: the Targeting
+   * screen rendered it as a chip, the old PUT accepted it, and it matched
+   * NOBODY because the filter demanded a non-null nationality first. So a
+   * client can be sitting on `countries: ['English', 'unknown']` right now.
+   * Had the sentinel been spelled 'unknown', that rule would have started
+   * forwarding the entire unread bucket on the deploy that fixed the filter --
+   * 112 people against 572 on `kris agency` -- with nobody touching the screen.
+   * It must go on matching nobody.
+   */
+  it('leaves a legacy `unknown` tick matching nobody, as it always did', () => {
+    expect(countryMatches(['unknown'], null)).toBe(false);
+    expect(countryMatches(['unknown'], 'english')).toBe(false);
+    expect(countryMatches(['English', 'unknown'], null)).toBe(false);
+    // And the half of that rule that DID work still works, unchanged.
+    expect(countryMatches(['English', 'unknown'], 'english')).toBe(true);
+  });
+
+  it('composes the sentinel with real countries in one rule', () => {
+    // The operator ticks `english` and `no nationality read`. Both populations
+    // forward; a third does not. The sentinel is one more member of the same
+    // OR, which is why it cannot collide with "any" -- that is a property of
+    // the array's length, not of its contents.
+    const rule = ['english', NO_NATIONALITY];
+    expect(countryMatches(rule, 'english')).toBe(true);
+    expect(countryMatches(rule, null)).toBe(true);
+    expect(countryMatches(rule, 'welsh')).toBe(false);
+  });
+
+  it('does not let a named country leak the unread bucket in', () => {
+    // The bug in the other direction: if the sentinel were implemented as "no
+    // reading matches anything", naming `english` alone would forward all 112.
+    expect(countryMatches(['english'], null)).toBe(false);
+  });
+
+  /**
+   * Adding a country to a rule can only ever ADD people. The empty list is the
+   * top of that lattice, so it must match everything every non-empty list
+   * matches -- including the unread bucket, which `['none']` names explicitly.
+   *
+   * Asserted as a relation rather than as five separate cases because the
+   * failure it caught was exactly a broken relation: the first version of the
+   * confidence gate made `[]` a strict SUBSET of `['none']` (see
+   * pipeline.service.ts), so ticking one more box widened the result past
+   * "any" while the PUT note went on calling the empty list "every origin".
+   * countryMatches never had that bug; the gate downstream of it did, and this
+   * pins the half that has to stay true for the fix to mean anything.
+   */
+  it('makes the empty list a superset of every list, unread bucket included', () => {
+    const populations = [null, undefined, 'english', 'welsh', 'italian'];
+    for (const lists of [['english'], ['welsh', NO_NATIONALITY], [NO_NATIONALITY]]) {
+      for (const p of populations) {
+        if (countryMatches(lists, p)) expect(countryMatches([], p)).toBe(true);
+      }
+    }
   });
 });
 

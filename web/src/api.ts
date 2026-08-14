@@ -164,6 +164,8 @@ export function num(v: unknown): number {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null);
+const strs = (v: unknown): string[] =>
+  Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
 const rows = (v: unknown): Record<string, unknown>[] =>
   Array.isArray(v) ? v.map((r) => fields(r)) : [];
 const fields = (v: unknown): Record<string, unknown> =>
@@ -287,11 +289,76 @@ export interface Rule {
   enabled?: boolean;
 }
 
+/**
+ * One name-origin box. `value` is what the filter stores and compares; `count`
+ * is how many people already in this client's ledger read that way, which is
+ * the whole reason the list stopped being a constant -- it answers "is this
+ * worth ticking" on the page instead of on the stats tab.
+ *
+ * `count: 0` is meaningful: the value is still saved on the rule but no longer
+ * appears in the data, so the box has to stay tickable and stay marked.
+ * `count: null` is the different case of a server that has not shipped the
+ * dynamic list yet and told us nothing -- see `asRuleOptions`.
+ */
+export interface Origin {
+  value: string;
+  count: number | null;
+}
+
+/**
+ * The sentinel for "the model could not read an origin from this name". It is
+ * the literal string the API and the filter both understand; `normCountry` maps
+ * that exact word to null before storage, so no real nationality can ever
+ * collide with it.
+ *
+ * `'none'` and not `'unknown'`, which is the word the bucket is actually called
+ * everywhere else. `unknown` was a chip on the OLD version of this screen, and
+ * it matched nobody -- the filter needed a non-null nationality before it
+ * compared anything. Reusing the string would have turned every rule still
+ * carrying that dead tick into one forwarding the whole unread bucket the
+ * moment the server deployed, with no operator touching the page. The old tick
+ * now arrives as its own option at count 0 and renders `none now`, which is
+ * exactly what it has always been worth.
+ *
+ * Never shown raw: the chip is labelled `no nationality read`, because the
+ * value reads like the word for "nothing selected", which is the opposite of
+ * what it does.
+ */
+export const NO_NATIONALITY = 'none';
+
 export interface RuleOptions {
-  origins: string[];
+  origins: Origin[];
   presentsAs: string[];
   confidences: string[];
   skinTones: string[];
+}
+
+/**
+ * `origins` changed from `string[]` to `{ value, count }[]` when the list
+ * started coming from the ledger. `api.rules()` had no coercion at all, unlike
+ * `asStats`, so a server still serving the old constant would put `undefined`
+ * in every chip. Accept either shape.
+ *
+ * The old shape gets `count: null`, NOT 0: zero now means "saved on the rule,
+ * absent from the data" and would tag every box as gone.
+ */
+function asRuleOptions(raw: unknown): RuleOptions {
+  const o = fields(raw);
+  return {
+    origins: (Array.isArray(o.origins) ? o.origins : [])
+      .map((v): Origin => {
+        if (typeof v === 'string') return { value: v, count: null };
+        const f = fields(v);
+        return {
+          value: str(f.value),
+          count: f.count === undefined || f.count === null ? null : num(f.count),
+        };
+      })
+      .filter((v) => v.value !== ''),
+    presentsAs: strs(o.presentsAs),
+    confidences: strs(o.confidences),
+    skinTones: strs(o.skinTones),
+  };
 }
 
 export interface Session {
@@ -358,8 +425,16 @@ export const api = {
   logout: () => req<Session>('/api/session', { method: 'DELETE' }),
 
   /** The vocabulary travels with the value: the UI never hardcodes an origin
-   *  list that could drift out of step with what the extractor returns. */
-  rules: () => req<{ options: RuleOptions; rule: Rule }>('/api/rules'),
+   *  list that could drift out of step with what the extractor returns. The
+   *  server now builds it from this client's own people, so `origins` is the
+   *  one part of the payload worth coercing -- `rule` is passed through
+   *  untouched so a server that omits it still trips the screen's own guard
+   *  rather than rendering an empty rule as a real one. */
+  rules: () =>
+    req<unknown>('/api/rules').then((r) => {
+      const raw = fields(r);
+      return { options: asRuleOptions(raw.options), rule: raw.rule as Rule };
+    }),
 
   saveRules: (rule: Rule) =>
     req<{ saved: boolean; rule: Rule; note?: string }>('/api/rules', {

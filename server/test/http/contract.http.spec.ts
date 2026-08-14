@@ -20,6 +20,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   addPeople,
+  addPeopleByNationality,
   dropFixtures,
   makeClient,
   prisma,
@@ -277,6 +278,44 @@ describe('the non-list endpoints', () => {
     // cannot draw a trend that never happened.
     expect(res.body.byDay).toHaveLength(30);
     expect(res.body.byDay[0]).toMatchObject({ sheets: 0, targets: 0, followed: 0, usd: 0 });
+  });
+
+  it('GET /api/rules serves origins as {value, count} and the rest as bare strings', async () => {
+    /**
+     * The only option list on this endpoint whose entries are objects, and the
+     * asymmetry is the contract: presentsAs, confidences and skinTones are
+     * closed vocabularies this server owns, while origins are read out of the
+     * client's own ledger and carry the count that makes them worth ticking.
+     *
+     * Untested anywhere until now, which is how the shape could drift from what
+     * the web reads without a red run. Pinned here rather than in a validation
+     * test because the failure it catches is a rendered `[object Object]`, not
+     * a rejected save.
+     */
+    const c = await ctx();
+    await addPeopleByNationality(c.personalityId, [
+      { nationality: 'welsh', count: 2 },
+      { nationality: null, count: 1 },
+    ]);
+
+    const res = await api.get('/api/rules', { auth: c.auth });
+
+    expect(res.status).toBe(200);
+    expect(Object.keys(res.body).sort()).toEqual(['options', 'rule']);
+    expect(Object.keys(res.body.options).sort()).toEqual([
+      'confidences',
+      'origins',
+      'presentsAs',
+      'skinTones',
+    ]);
+    for (const o of res.body.options.origins) {
+      expect(Object.keys(o).sort()).toEqual(['count', 'value']);
+      expect(typeof o.value).toBe('string');
+      expect(typeof o.count).toBe('number');
+    }
+    expect(res.body.options.origins).toContainEqual({ value: 'welsh', count: 2 });
+    expect(res.body.options.presentsAs).toEqual(['man', 'woman', 'ambiguous']);
+    expect(res.body.options.confidences.every((v: unknown) => typeof v === 'string')).toBe(true);
   });
 
   it('GET /v1/accounts/:id/sheets/:jobId reports cost as a number', async () => {

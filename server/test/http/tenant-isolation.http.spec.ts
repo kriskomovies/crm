@@ -22,7 +22,15 @@
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { dropFixtures, makeClient, prisma, queueTargets, TestClient } from '../fixtures';
+import { NO_NATIONALITY } from '../../src/extraction/normalize';
+import {
+  addPeopleByNationality,
+  dropFixtures,
+  makeClient,
+  prisma,
+  queueTargets,
+  TestClient,
+} from '../fixtures';
 import { bootHarness, Harness } from './app';
 import { addSheet } from './seed';
 
@@ -144,6 +152,33 @@ describe('reads scoped to the calling client', () => {
       auth: a.auth,
     });
     expect(res.status).toBe(404);
+  });
+
+  it('GET /api/rules names only the caller`s own nationalities', async () => {
+    /**
+     * A NEW leak surface. This route used to answer with a constant, so there
+     * was nothing here to scope and nothing here to get wrong; it now reads
+     * `people` through `personalities` and aggregates them, which is exactly
+     * the shape of query /api/stats shipped unscoped and served the whole
+     * estate's country mix from.
+     *
+     * Distinct values per tenant, not distinct counts: a wrong scope shows up
+     * as a value that cannot have come from the caller's ledger, which is
+     * unambiguous in a way a doubled number is not.
+     */
+    const { a, b } = await twoTenants();
+    await addPeopleByNationality(a.personalityId, [{ nationality: 'welsh', count: 2 }]);
+    await addPeopleByNationality(b.personalityId, [{ nationality: 'lithuanian', count: 5 }]);
+
+    const res = await api.get('/api/rules', { auth: a.auth });
+
+    expect(res.status).toBe(200);
+    const origins: { value: string; count: number }[] = res.body.options.origins;
+    expect(origins).toContainEqual({ value: 'welsh', count: 2 });
+    expect(origins.map((o) => o.value)).not.toContain('lithuanian');
+    // And the null bucket is counted per tenant too. `a` has 3 people from
+    // queueTargets with no nationality plus 2 welsh; `b`'s 7 are not here.
+    expect(origins).toContainEqual({ value: NO_NATIONALITY, count: 3 });
   });
 });
 

@@ -19,6 +19,7 @@
  * fire every verb -- including DELETE /api/personalities/:id -- without touching
  * a real row, and a 404 is a perfectly good "not 401".
  */
+import { NO_NATIONALITY } from '../../src/extraction/normalize';
 
 /** Not a real id anywhere, so a request that gets past the guard finds nothing. */
 export const ABSENT = '00000000-0000-4000-8000-0000000000ff';
@@ -170,7 +171,14 @@ export const ROUTES: RouteSpec[] = [
     sample: '/api/rules',
     body: {
       presentsAs: ['man'],
-      countries: ['English'],
+      // The sentinel, not a country name, and for the same reason the settings
+      // body above pins a real EXTRACTION_MODELS member: countries are now
+      // validated against what THIS client's extractor has actually returned,
+      // so any real nationality would 400 for a client whose ledger is empty --
+      // and the auth matrix would then pass on a 400 that never reached the
+      // guard's route. The sentinel is the one value always in the option list,
+      // because the null bucket exists whether or not anyone is in it.
+      countries: [NO_NATIONALITY],
       skinTones: ['light', 'light-tan'],
       minConfidence: 'low',
     },

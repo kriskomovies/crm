@@ -530,3 +530,15 @@ td.rowdetail::before { content: none; }
 /* The native control is the accessible one; hiding it would break keyboard and
    screen-reader use, so it stays and is merely small. */
 .chip input { accent-color: var(--accent); margin: 0; }
+
+/* How many people already read that way. It is the reason the origin list comes
+   from the ledger rather than a constant, so it sits inside the chip and not in
+   a paragraph under it. `none now` marks a value still saved on the rule that no
+   sheet has returned since: it keeps filtering, it just is not coming back. */
+.chip .n {
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.chip.on .n { color: #a9c4ee; }
+.chip .n.gone { color: var(--amber); font-variant-numeric: normal; }
