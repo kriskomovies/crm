@@ -508,6 +508,33 @@ td.rowdetail::before { content: none; }
 
 .chips { display: flex; flex-wrap: wrap; gap: 0.45rem; }
 
+/* Long vocabularies get a grid instead of a wrap. Name origin is 29 entries
+   whose labels run from "greek" to "no origin read", and flex-wrap packed them
+   into ragged rows with the counts landing wherever the label happened to end;
+   the one two-line label then set a taller row height than its neighbours. A
+   fixed track makes every box the same width, so the counts line up in columns
+   and the block scans down rather than being read left to right. */
+.chips.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+  gap: 0.4rem;
+}
+.chips.grid .chip {
+  /* space-between is what right-aligns the counts into a column. */
+  justify-content: space-between;
+  border-radius: 6px;
+  min-height: 2.1rem;
+}
+/* The label takes the room the count does not, and truncates rather than
+   wrapping -- a wrapped label is what made the rows uneven. The full value is
+   always in the title. */
+.chips.grid .chip .label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chips.grid .chip input { flex: 0 0 auto; }
+
 .chip {
   display: inline-flex;
   align-items: center;

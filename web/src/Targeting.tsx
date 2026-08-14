@@ -99,7 +99,7 @@ export function Targeting() {
         </p>
 
         <h3>Name origin</h3>
-        <div className="chips">
+        <div className="chips grid">
           {options.origins.map((o) => (
             <label
               key={o.value}
@@ -117,7 +117,9 @@ export function Targeting() {
                 checked={has(rule.countries, o.value)}
                 onChange={() => setRule({ ...rule, countries: toggle(rule.countries, o.value) })}
               />
-              {o.value === NO_NATIONALITY ? 'no nationality read' : o.value}
+              <span className="label">
+                {o.value === NO_NATIONALITY ? 'no origin read' : o.value}
+              </span>
               {/* A count the server did not send is left blank rather than
                   printed as 0, which would read as "gone" on every box. */}
               {o.count !== null && (
@@ -128,13 +130,22 @@ export function Targeting() {
             </label>
           ))}
         </div>
+        {/* The question this answers gets asked every time somebody looks for
+            "american" and does not find it. It is not a gap in the data: the
+            extraction prompt instructs the model NOT to split generic
+            English-language names into American, British, Canadian or
+            Australian, because a name like "John Smith" carries nothing that
+            separates them and guessing there produces noise. Geography is the
+            proxy's job, not this field's. */}
         <p className="muted small">
           From your own sheets, commonest first. Nothing ticked forwards{' '}
-          <b>every</b> origin.
+          <b>every</b> origin. <b>english</b> covers every anglophone name — American,
+          British, Canadian and Australian are deliberately not split, because a name
+          alone cannot tell them apart.
         </p>
 
         <h3>Skin tone</h3>
-        <div className="chips">
+        <div className="chips grid">
           {options.skinTones.map((t) => (
             <label key={t} className={rule.skinTones.includes(t) ? 'chip on' : 'chip'}>
               <input
@@ -142,7 +153,7 @@ export function Targeting() {
                 checked={rule.skinTones.includes(t)}
                 onChange={() => setRule({ ...rule, skinTones: toggle(rule.skinTones, t) })}
               />
-              {t}
+              <span className="label">{t}</span>
             </label>
           ))}
         </div>
