@@ -527,13 +527,19 @@ td.rowdetail::before { content: none; }
 }
 /* The label takes the room the count does not, and truncates rather than
    wrapping -- a wrapped label is what made the rows uneven. The full value is
-   always in the title. */
+   always in the title.
+
+   flex and min-width are both load-bearing. `overflow: hidden` drops this
+   item's automatic minimum size to zero, so without `flex: 1 1 auto` claiming
+   the free space the label is free to collapse to 0px and render nothing --
+   which is exactly what it did while the checkbox was taking the whole box. */
 .chips.grid .chip .label {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chips.grid .chip input { flex: 0 0 auto; }
 
 .chip {
   display: inline-flex;
@@ -555,8 +561,23 @@ td.rowdetail::before { content: none; }
   color: #dce9ff;
 }
 /* The native control is the accessible one; hiding it would break keyboard and
-   screen-reader use, so it stays and is merely small. */
-.chip input { accent-color: var(--accent); margin: 0; }
+   screen-reader use, so it stays and is merely small.
+
+   Small is not automatic here. A chip's checkbox is still an `input`, so it
+   inherits `width: 100%` and text-field padding from the base rule up the
+   file, which sizes it to the whole chip. Inline chips got away with it
+   because a default flex-shrink of 1 squeezed it back down to the glyph; the
+   grid chips pin the input at `flex: 0 0 auto` to keep the counts aligned, and
+   with shrink off, that inherited full width stood -- the box swallowed the
+   chip and every origin and skin-tone label rendered blank. Size it to its own
+   glyph and the inherited width stops mattering in either layout. */
+.chip input {
+  accent-color: var(--accent);
+  margin: 0;
+  flex: 0 0 auto;
+  width: auto;
+  padding: 0;
+}
 
 /* How many people already read that way. It is the reason the origin list comes
    from the ledger rather than a constant, so it sits inside the chip and not in
