@@ -470,3 +470,58 @@ describe('report', () => {
     ).rejects.toThrow(NotFoundException);
   });
 });
+
+/**
+ * The other half of a cycle, which the server used to never hear about.
+ *
+ * An agent is told two things -- follow these, and these are refused -- and it
+ * reported only the follows. A fleet could be swiping thousands of rows a day
+ * with nothing written down, so "has that box done its pass" was a question you
+ * answered by looking at its screen.
+ */
+describe('hide', () => {
+  it('records a person this account swiped off its roster', async () => {
+    const client = await makeClient({ accounts: 2, dailyCap: 50 });
+    const [mine, sibling] = client.personality.accounts;
+    // The real population: queued to a SIBLING, so this account will never be
+    // handed them and there is no assignment of its own to write a state on.
+    const handles = await queueTargets(client.personality.id, sibling.id, 1);
+
+    await targets.hide(mine.id, handles[0]);
+
+    const row = await prisma.hide.findFirst({
+      where: { accountId: mine.id, person: { handle: handles[0] } },
+    });
+    expect(row).not.toBeNull();
+    expect(row!.times).toBe(1);
+    // And the sibling's claim on that person is untouched -- a hide is a note
+    // about one roster, not a decision about who follows whom.
+    const assignment = await prisma.assignment.findFirst({
+      where: { person: { personalityId: client.personality.id, handle: handles[0] } },
+    });
+    expect(assignment!.accountId).toBe(sibling.id);
+    expect(assignment!.state).toBe('queued');
+  });
+
+  it('counts a re-hide once, because a re-rolled roster serves the same face', async () => {
+    const client = await makeClient({ accounts: 1, dailyCap: 50 });
+    const account = client.personality.accounts[0];
+    const handles = await queueTargets(client.personality.id, account.id, 1);
+
+    await targets.hide(account.id, handles[0]);
+    await targets.hide(account.id, handles[0]);
+
+    // One row, and the second POST is free -- an agent must never have to
+    // remember what it already hid, and a retry must not be an error.
+    expect(await prisma.hide.count({ where: { accountId: account.id } })).toBe(1);
+    const row = await prisma.hide.findFirst({ where: { accountId: account.id } });
+    expect(row!.times).toBe(2);
+  });
+
+  it('refuses a handle the personality has never seen', async () => {
+    const client = await makeClient({ accounts: 1, dailyCap: 50 });
+    await expect(
+      targets.hide(client.personality.accounts[0].id, 'never_seen_here'),
+    ).rejects.toThrow(NotFoundException);
+  });
+});

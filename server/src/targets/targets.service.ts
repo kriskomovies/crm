@@ -334,6 +334,45 @@ export class TargetsService {
   }
 
   /**
+   * Record that this account swiped a refused person off its own Quick Add.
+   *
+   * The other half of report(), and the half the server was blind to. An agent
+   * is told two things per cycle -- follow these, hide these -- and only the
+   * follows came back, so "has that box done its pass" could only be answered by
+   * looking at its screen. With twenty boxes that is not an answer.
+   *
+   * Deliberately NOT routed through report(): these people have no assignment to
+   * this account, which is the definition of refused. See the Hide model.
+   *
+   * Idempotent by (accountId, personId). A roster that re-rolls serves the same
+   * face again and hiding it twice is expected, so a repeat moves `at` and bumps
+   * `times` rather than erroring or piling up rows -- an agent must never have to
+   * remember what it already hid, and a retried POST must be free.
+   */
+  async hide(accountId: string, handle: string): Promise<void> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { personalityId: true },
+    });
+    if (!account) throw new NotFoundException('account not found');
+
+    const person = await this.prisma.person.findUnique({
+      where: { personalityId_handle: { personalityId: account.personalityId, handle } },
+      select: { id: true },
+    });
+    // A handle nobody has ever read for this personality. The agent hides what
+    // the server told it to hide, so this means the two have drifted; it is the
+    // server's ledger that is authoritative, and there is nothing to record.
+    if (!person) throw new NotFoundException('unknown handle for this personality');
+
+    await this.prisma.hide.upsert({
+      where: { accountId_personId: { accountId, personId: person.id } },
+      create: { accountId, personId: person.id },
+      update: { times: { increment: 1 }, at: new Date() },
+    });
+  }
+
+  /**
    * Handles this account will never be told to add, newest first.
    *
    * The agent hides these from its emulator's Quick Add roster, which is what

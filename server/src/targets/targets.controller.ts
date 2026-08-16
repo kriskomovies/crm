@@ -138,6 +138,27 @@ export class TargetsController {
     await this.targets.report(accountId, handle, dto.result, dto.note);
     return { ok: true };
   }
+
+  /**
+   * "I have swiped this refused person off my roster."
+   *
+   * Sits beside :handle/result rather than inside it because the two report on
+   * different populations: a result belongs to a target this account was handed,
+   * a hide belongs to somebody it was told it would never be handed. Same guard,
+   * same ownership check, same shape of reply.
+   *
+   * No body. There is one thing an agent can say here and the route says it.
+   */
+  @Post(':handle/hidden')
+  async hidden(
+    @Param('accountId') accountId: string,
+    @Param('handle') handle: string,
+    @Req() req: any,
+  ) {
+    await this.assertOwned(accountId, req.client.id);
+    await this.targets.hide(accountId, handle);
+    return { ok: true };
+  }
 }
 
 @Controller('v1/personalities/:personalityId')

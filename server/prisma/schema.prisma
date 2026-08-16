@@ -254,9 +254,45 @@ model Account {
   personality Personality  @relation(fields: [personalityId], references: [id], onDelete: Cascade)
   sheets      Sheet[]
   assignments Assignment[]
+  hides       Hide[]
 
   @@unique([personalityId, label])
   @@map("accounts")
+}
+
+/// One person this account has swiped off its own Quick Add roster.
+///
+/// The other half of a cycle's work, and until now the half the server never
+/// saw. An agent is told two things -- follow these, and these are refused --
+/// and it reported only the follows, so a fleet of twenty boxes could be hiding
+/// thousands of rows a day with no record that any of it happened. "Did that
+/// machine do its pass" was answerable only by watching its screen.
+///
+/// A separate table rather than a state on Assignment, because the population
+/// has no assignment TO this account by definition: refusedHandles is exactly
+/// the people whose Assignment is null or points at a sibling account, and
+/// Assignment.personId is UNIQUE. Writing a hide there would either fail or
+/// steal a person from the account that is going to follow them.
+///
+/// (accountId, personId) unique and upserted, so a re-hide -- a row Snapchat
+/// served again after the roster re-rolled, which is normal -- moves `at` and
+/// counts once. Bumping `times` says how often we have had to hide the same
+/// face, which is the signal that a roster is going stale.
+model Hide {
+  id        String   @id @default(uuid())
+  accountId String
+  personId  String
+  times     Int      @default(1)
+  at        DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  person  Person  @relation(fields: [personId], references: [id], onDelete: Cascade)
+
+  @@unique([accountId, personId])
+  /// "What has this box hidden today" -- the per-account, time-windowed read
+  /// that /api/stats and any fleet dashboard asks.
+  @@index([accountId, at])
+  @@map("hides")
 }
 
 enum SheetStatus {
@@ -392,6 +428,7 @@ model Person {
   firstSeenSheet Sheet?      @relation(fields: [firstSeenSheetId], references: [id], onDelete: SetNull)
   assignment     Assignment?
   overrides      Override[]
+  hides          Hide[]
 
   @@unique([personalityId, handle])
   @@index([personalityId, presentsAs, nationality])
