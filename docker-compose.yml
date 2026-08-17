@@ -69,6 +69,15 @@ services:
       redis: { condition: service_healthy }
       minio: { condition: service_healthy }
     environment: &app-env
+      # The operator's day, and therefore when every daily cap resets. A
+      # container with no TZ is UTC, which is not a neutral default -- it is a
+      # silent one: common/day.ts says "local midnight" and means it, so on a box
+      # without this the caps roll over at whatever hour UTC midnight happens to
+      # be locally. Measured on 2026-08-17 with the operator at UTC+3: an account
+      # handed 156 people at 02:04-02:58 local read 0/240, having been given a
+      # fresh day's budget at three in the morning. Set it to the timezone the
+      # people watching the dashboard live in.
+      TZ: ${TZ:-UTC}
       DATABASE_URL: postgresql://${POSTGRES_USER:-snap}:${POSTGRES_PASSWORD:-snap}@db:5432/${POSTGRES_DB:-snap}
       REDIS_HOST: redis
       REDIS_PORT: '6379'

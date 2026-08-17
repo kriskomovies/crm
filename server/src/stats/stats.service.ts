@@ -17,6 +17,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
+import { startOfToday, utcLiteral } from '../common/day';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -430,24 +431,6 @@ function dayLiteral(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/**
- * Timestamps are `timestamp(3) without time zone` holding UTC, but $queryRaw
- * binds a JS Date as `timestamptz` -- Postgres then converts it with the
- * session TimeZone, which on this box is Europe/Kiev. Measured: the same bound
- * that matches a row through the Prisma client matches zero rows through
- * $queryRaw, three hours adrift and with no error. Binding an explicit UTC
- * literal and casting to `timestamp` takes the session out of the question.
- */
-function utcLiteral(d: Date): string {
-  return d.toISOString().replace('T', ' ').replace('Z', '');
-}
-
-/** Local midnight. Caps reset by the operator's day, not UTC's. */
-function startOfToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
 
 function sum<T>(rows: T[], pick: (row: T) => number): number {
   let total = 0;

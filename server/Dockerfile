@@ -13,6 +13,13 @@ RUN npx nest build
 FROM node:24-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
+# Alpine carries no zone database, and Node without one answers every question
+# about local time in UTC -- silently, with no warning and no error. TZ in the
+# compose file would have looked set and done nothing, which is a worse failure
+# than leaving it unset: common/day.ts counts the daily cap from local midnight,
+# so the caps would keep resetting at UTC midnight while the configuration said
+# otherwise. ~3 MB, and the whole point of the setting.
+RUN apk add --no-cache tzdata
 COPY package*.json ./
 COPY prisma ./prisma
 RUN npm ci --omit=dev && npx prisma generate && npm cache clean --force

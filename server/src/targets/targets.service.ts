@@ -15,6 +15,7 @@
  */
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 
+import { startOfToday, utcLiteral } from '../common/day';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface TargetRow {
@@ -473,18 +474,3 @@ export class TargetsService {
   }
 }
 
-function startOfToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
-
-/**
- * The same instant handedOutToday() bounds on, written so $queryRaw cannot
- * reinterpret it. Binding a JS Date sends timestamptz, which Postgres converts
- * against the session TimeZone before comparing it to a `timestamp` column
- * holding UTC -- silently, and three hours out on this box.
- */
-function utcLiteral(d: Date): string {
-  return d.toISOString().replace('T', ' ').replace('Z', '');
-}

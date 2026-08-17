@@ -21,6 +21,7 @@ import {
 } from '@nestjs/common';
 import { AssignmentState, Prisma } from '@prisma/client';
 
+import { startOfToday } from '../common/day';
 import { pageSize, slicePage } from '../common/pagination';
 import { cleanDisplayName, isPlausibleHandle, normHandle } from '../extraction/normalize';
 import { PipelineService } from '../pipeline/pipeline.service';
@@ -975,9 +976,3 @@ function failedTodayWhere() {
   return { state: AssignmentState.queued, resultAt: { gte: startOfToday() } };
 }
 
-/** Local midnight. Caps reset by the operator's day, not UTC's. */
-function startOfToday(): Date {
-  const d = new Date();
-  d.setHours(0, 0, 0, 0);
-  return d;
-}
