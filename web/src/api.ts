@@ -6,10 +6,16 @@ export type Account = {
   /** The client's setting, not this account's. Edited on the Settings tab. */
   dailyCap: number;
   enabled: boolean;
+  /** Cap SLOTS taken today, which is what the cap bar draws. Moves by a whole
+   *  batch when an agent claims and then holds still while that batch is worked,
+   *  so it is not the number to watch a run through -- followedToday is. */
   handedToday: number;
   remainingToday: number;
   queued: number;
   followed: number;
+  /** Follows this account landed TODAY. The only counter on the row that a single
+   *  follow moves, so it is what shows a run advancing between polls. */
+  followedToday: number;
   /** Handles this personality holds that no account was ever given, because the
    *  filter dropped them. A drop leaves a person and no assignment, so this is a
    *  property of the personality and reads the same on every one of its account

@@ -237,8 +237,16 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
         <td data-label="account">
           <code>{a.label}</code>
         </td>
-        <td data-label="cap" className="cap-col">
-          <CapBar used={a.handedToday} cap={a.dailyCap} />
+        {/* Two numbers, because the cap alone cannot show a run happening: it
+            counts slots handed out, so it jumps once per batch and then sits
+            still while that batch is worked. The green figure is follows that
+            landed today and moves on every single add. */}
+        <td
+          data-label="cap"
+          className="cap-col"
+          title={`${a.handedToday} of ${a.dailyCap} cap slots taken today, ${a.followedToday} followed so far`}
+        >
+          <CapBar used={a.handedToday} cap={a.dailyCap} landed={a.followedToday} />
         </td>
         <td data-label="queued" className="num">
           {a.queued || ''}

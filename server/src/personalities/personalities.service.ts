@@ -64,7 +64,7 @@ export class PersonalitiesService {
    * dropdown that the whole stats screen hangs off. Paginating it would make
    * that dropdown lie about what can be filtered on.
    *
-   * Four queries in total, and it stays four however many personalities exist.
+   * Five queries in total, and it stays five however many personalities exist.
    * The obvious version -- loop the accounts, ask for each account's queued
    * count, followed count and today's handouts -- is three round trips per
    * account: at 100 clients x 10 personalities x 10 accounts that is 30,000,
@@ -75,19 +75,20 @@ export class PersonalitiesService {
    * condition of adding them. Both are arithmetic on rows this method already
    * reads -- see personalityTotals.
    *
-   * `failedToday` is the one column that could not be had that way, and the
-   * rule above is amended rather than quietly broken. The state groupBy carries
-   * no date and the handout groupBy carries no state, so "queued rows that were
-   * reported on today" is not a subtraction over either: it is a fourth grouped
-   * query, on the same @@index([accountId, state]) the second one uses, in the
-   * same Promise.all. What is still refused is the shape that does not scale --
+   * `failedToday` and `followedToday` are the two that could not be had that
+   * way, and the rule above is amended rather than quietly broken. The state
+   * groupBy carries no date and the handout groupBy carries no state, so "rows in
+   * this state that were reported on today" is not a subtraction over either:
+   * each is its own grouped query, on the same @@index([accountId, state]) the
+   * second one uses, in the same Promise.all. What is still refused is the
+   * shape that does not scale --
    * a COUNT per account, which is the pattern PersonalityLedgerController.ledger
    * records as the cost that grows with the ledger. This is polled every five
    * seconds by every open dashboard.
    */
   async list(clientId: string) {
     const ofClient = { account: { personality: { clientId } } };
-    const [rows, states, handedToday, failedToday] = await Promise.all([
+    const [rows, states, handedToday, failedToday, followedToday] = await Promise.all([
       this.prisma.personality.findMany({
         where: { clientId },
         include: {
@@ -114,11 +115,17 @@ export class PersonalitiesService {
         where: { ...ofClient, ...failedTodayWhere() },
         _count: { _all: true },
       }),
+      this.prisma.assignment.groupBy({
+        by: ['accountId'],
+        where: { ...ofClient, ...followedTodayWhere() },
+        _count: { _all: true },
+      }),
     ]);
 
     const byAccount = groupCounts(states);
     const today = new Map(handedToday.map((h) => [h.accountId, h._count._all]));
     const missed = new Map(failedToday.map((f) => [f.accountId, f._count._all]));
+    const landed = new Map(followedToday.map((f) => [f.accountId, f._count._all]));
 
     return rows.map((p) => {
       // The groupBy above spans the whole client, so the per-personality slice
@@ -140,6 +147,7 @@ export class PersonalitiesService {
             counts[i],
             today.get(a.id) ?? 0,
             missed.get(a.id) ?? 0,
+            landed.get(a.id) ?? 0,
             totals,
             p._count.people,
           ),
@@ -239,7 +247,7 @@ export class PersonalitiesService {
   /**
    * One account in the shape `list` nests, counters and all.
    *
-   * Four queries for one account, where `list` does four for every account a
+   * Five queries for one account, where `list` does five for every account a
    * client has. That is the right trade in opposite directions: this runs once
    * per registration, and a registration must answer with live numbers because
    * the agent adopts this object and starts its first cycle from it without a
@@ -257,7 +265,7 @@ export class PersonalitiesService {
     personalityId: string,
     dailyCap: number,
   ): Promise<AccountView> {
-    const [people, states, handedToday, failedToday] = await Promise.all([
+    const [people, states, handedToday, failedToday, followedToday] = await Promise.all([
       this.prisma.person.count({ where: { personalityId } }),
       this.prisma.assignment.groupBy({
         by: ['accountId', 'state'],
@@ -275,6 +283,9 @@ export class PersonalitiesService {
       this.prisma.assignment.count({
         where: { accountId: a.id, ...failedTodayWhere() },
       }),
+      this.prisma.assignment.count({
+        where: { accountId: a.id, ...followedTodayWhere() },
+      }),
     ]);
     const byAccount = groupCounts(states);
     const totals = personalityTotals([...byAccount.values()]);
@@ -284,6 +295,7 @@ export class PersonalitiesService {
       byAccount.get(a.id) ?? {},
       handedToday,
       failedToday,
+      followedToday,
       totals,
       people,
     );
@@ -866,6 +878,15 @@ export interface AccountView extends AccountRow {
    * run missed", asked by the same operator who is about to press reset.
    */
   failedToday: number;
+  /**
+   * Follows this account landed TODAY -- see followedTodayWhere. Today-scoped and
+   * named for it, like handedToday and failedToday.
+   *
+   * This is the counter to watch while a run is in progress: it is the only one
+   * on the row that a single follow moves, so a dashboard polling every five
+   * seconds shows the run advancing through it and through nothing else.
+   */
+  followedToday: number;
 }
 
 /**
@@ -917,6 +938,7 @@ function accountView(
   counts: Record<string, number>,
   handedToday: number,
   failedToday: number,
+  followedToday: number,
   totals: PersonalityTotals,
   people: number,
 ): AccountView {
@@ -948,6 +970,7 @@ function accountView(
     // were already fetched to fill in `queued` and `followed`.
     alreadyFollowed: totals.followed - followed,
     failedToday,
+    followedToday,
   };
 }
 
@@ -974,5 +997,24 @@ function accountView(
  */
 function failedTodayWhere() {
   return { state: AssignmentState.queued, resultAt: { gte: startOfToday() } };
+}
+
+/**
+ * Rows this account actually followed today.
+ *
+ * The one number on the row that moves on every single follow, and the reason it
+ * exists. `handedToday` is what the cap bar draws, and it is a count of SLOTS
+ * TAKEN: it jumps by a whole batch the moment an agent claims, then sits still
+ * for the twenty minutes the agent spends working through that batch. Watching
+ * it during a run and concluding nothing is happening is the correct reading of
+ * the wrong number. `followed` next to it is all-time, so on an account with a
+ * long history it moves by one in a four-digit figure and reads as frozen too.
+ *
+ * Safe as `state = 'followed'` where failedToday could not be, because followed
+ * is terminal -- report() is the only writer and it never moves a row out of it,
+ * so the state and the timestamp cannot disagree later.
+ */
+function followedTodayWhere() {
+  return { state: AssignmentState.followed, resultAt: { gte: startOfToday() } };
 }
 

@@ -421,8 +421,21 @@ td.rowdetail::before { content: none; }
   background: #23272f;
   border-radius: 99px;
   overflow: hidden;
+  /* For .cap-lead, which has to sit ON the used fill rather than after it: two
+     block children of a 6px track stack, and the second one lands outside it. */
+  position: relative;
 }
 .cap-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
+/* Follows that landed, drawn over the slots they spent. */
+.cap-lead {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--green);
+  transition: width 0.3s;
+}
 .cap-label {
   color: var(--muted);
   font-size: 12px;
@@ -430,6 +443,8 @@ td.rowdetail::before { content: none; }
   min-width: 48px;
   text-align: right;
 }
+/* Reads as part of the cap figure, not as a second column. */
+.cap-done { color: var(--green); font-style: normal; }
 
 /* ---- operator sign in -----------------------------------------------------
    Replaces the browser's basic-auth prompt. Centred with grid rather than
