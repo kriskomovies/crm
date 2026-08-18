@@ -47,7 +47,8 @@ username handle directly under the name.
 Return ONLY a JSON object, no prose and no markdown fence:
 {{"entries": [{{"n": {first}, "display_name": "...", "handle": "...", \
 "nationality": "...", "nationality_confidence": "...", \
-"avatar_presents_as": "...", "name_presents_as": "..."}}, ...]}}
+"avatar_presents_as": "...", "name_presents_as": "...", \
+"facial_hair": "...", "bald": "..."}}, ...]}}
 
 Emit exactly {n} entries, numbered {first} to {last}, none skipped.
 
@@ -78,6 +79,17 @@ names, initials, nicknames and handles with nothing to go on -- it is the \
 correct answer far more often than either alternative, so use it freely.
 These two are deliberately separate and MUST be judged independently. Do not \
 reconcile them; if the cartoon and the name disagree, report the disagreement.
+- facial_hair: what is drawn on the CARTOON's face. Exactly one of "none", \
+"stubble", "moustache", "goatee", "beard", "beard+moustache", \
+"moustache+goatee". Answer "none" explicitly when the face is clean-shaven -- \
+never leave this blank and never omit the key. Most faces here are clean-shaven, \
+so "none" is the common and correct answer; do not invent facial hair to seem \
+observant.
+- bald: whether the CARTOON has visible hair on top of the head. One of "yes", \
+"no", "unknown". Use "yes" only when scalp is visible where hair would be. Use \
+"unknown" when a hat, cap or hood covers the top of the head so you genuinely \
+cannot tell -- that is a real answer here, not a cop-out, because a beanie hides \
+the one thing this field asks about.
 - If you genuinely cannot read a name or handle, use "" rather than inventing \
 one."""
 

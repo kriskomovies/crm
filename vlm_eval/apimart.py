@@ -143,7 +143,21 @@ class Model:
     instead of being pre-emptively withheld from every model.
     """
 
-    def __init__(self, model_id, temperature=0.0, max_tokens=16000, key=None):
+    # 32000 to match server/src/extraction/gateway.client.ts, which uses
+    # `o.maxTokens ?? 32000`. It was 16000 here, and that silently made this
+    # harness measure a DIFFERENT configuration from the one production runs.
+    #
+    # It bit on 2026-08-04: gemini-3.6-flash, which had scored 99/99 on five
+    # earlier runs, came back 91/99 with out=15996 -- four tokens under the cap.
+    # gemini-3.5-flash and gemini-3-flash-preview reported the same 15996 and
+    # 89/99 and 81/99. Three models with byte-identical output counts is a
+    # ceiling, not three coincidences, and the salvage path made it look like an
+    # accuracy result instead of a truncation.
+    #
+    # The models did not get worse; they think more than they used to. Earlier
+    # gemini-3.6-flash runs landed at 11.6k-14.4k output tokens, so the headroom
+    # that existed when the benchmark was written has since been spent.
+    def __init__(self, model_id, temperature=0.0, max_tokens=32000, key=None):
         self.model_id = model_id
         self.temperature = temperature
         self.max_tokens = max_tokens
