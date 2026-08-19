@@ -78,6 +78,14 @@ import { TargetsService } from './targets/targets.service';
     RetentionService,
     EnrolmentService,
     SessionService,
+    // Exported, not merely provided. The controllers live in the module below
+    // and can only inject what this one exports, so a service that is a
+    // provider here and nothing else is invisible to them -- and invisible in a
+    // way tsc cannot see, because Nest resolves it at boot. TargetsController
+    // asks for it, so the API refused to start at all:
+    //   Nest can't resolve dependencies of the TargetsController
+    //   (TargetsService, PrismaService, ?)
+    OnboardingService,
   ],
 })
 export class CoreModule {}
