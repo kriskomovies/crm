@@ -88,6 +88,11 @@ import { TargetsService } from './targets/targets.service';
     //   Nest can't resolve dependencies of the TargetsController
     //   (TargetsService, PrismaService, ?)
     OnboardingService,
+    // Same reason, same controller. RosterService went in as a provider only and
+    // would have failed at boot in exactly the way OnboardingService just did --
+    // the second time in one day, which is what a checklist is for: a service
+    // this module provides AND a controller injects must appear in both lists.
+    RosterService,
   ],
 })
 export class CoreModule {}
