@@ -21,14 +21,34 @@ import {
   Res,
   UseGuards,
 } from '@nestjs/common';
-import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsIn,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { pageSize, slicePage } from '../common/pagination';
 import { PersonalitiesService } from '../personalities/personalities.service';
 import { OnboardingService } from '../onboarding/onboarding.service';
+import { RosterService } from './roster.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { FollowResult, TargetsService } from './targets.service';
+
+/** The handles a machine can see on its own Quick Add, right now. */
+class RosterDto {
+  @IsArray()
+  // A roster is about a hundred. The bound is on the request rather than only in
+  // the service so an absurd body is refused before it reaches a transaction
+  // holding a row lock.
+  @ArrayMaxSize(400)
+  @IsString({ each: true })
+  @MaxLength(200, { each: true })
+  handles!: string[];
+}
 
 class ReportDto {
   @IsIn(['followed', 'failed', 'skipped'])
@@ -75,6 +95,7 @@ export class TargetsController {
     private readonly targets: TargetsService,
     private readonly prisma: PrismaService,
     private readonly onboarding: OnboardingService,
+    private readonly rosters: RosterService,
   ) {}
 
   private async assertOwned(accountId: string, clientId: string) {
@@ -155,6 +176,36 @@ export class TargetsController {
       // was going to add them and the agent would have hidden the very people it
       // was about to follow.
       refusedHandles: await this.targets.refusedHandles(accountId),
+    };
+  }
+
+  /**
+   * The whole roster, answered row by row.
+   *
+   * POST rather than GET because a hundred handles do not belong in a query
+   * string, and because this WRITES: an `add` is charged to today's cap in the
+   * same transaction that decided it, exactly as a claim is.
+   *
+   * It replaces the two questions this endpoint used to answer separately -- N
+   * newest targets, 500 newest refusals -- neither of which was about the screen
+   * in front of the machine. Every handle sent comes back with one of add,
+   * reject or leave, and the machine needs no rule of its own beyond doing what
+   * it is told.
+   */
+  @Post('roster')
+  async roster(
+    @Param('accountId') accountId: string,
+    @Body() dto: RosterDto,
+    @Req() req: any,
+  ) {
+    await this.assertOwned(accountId, req.client.id);
+    const answer = await this.rosters.decide(accountId, dto.handles ?? []);
+    return {
+      ...answer,
+      // Delivered where it is about to be used, like the claim's copy: every
+      // cycle asks this before it taps anything, so the machine cannot act on a
+      // pace older than the roster in front of it.
+      paceSeconds: await this.targets.paceSeconds(accountId),
     };
   }
 

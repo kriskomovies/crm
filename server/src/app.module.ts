@@ -28,6 +28,7 @@ import { StatsController } from './stats/stats.controller';
 import { StatsService } from './stats/stats.service';
 import { StorageService } from './storage/storage.service';
 import { PersonalityLedgerController, TargetsController } from './targets/targets.controller';
+import { RosterService } from './targets/roster.service';
 import { TargetsService } from './targets/targets.service';
 
 /** Shared by both entrypoints; the worker imports this without the controllers. */
@@ -65,6 +66,7 @@ import { TargetsService } from './targets/targets.service';
     SessionService,
     ApiKeyGuard,
     OnboardingService,
+    RosterService,
   ],
   exports: [
     PrismaService,
