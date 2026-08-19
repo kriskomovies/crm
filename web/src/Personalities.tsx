@@ -253,16 +253,17 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
         <td data-label="status">
           <HealthPill a={a} />
         </td>
-        {/* Two numbers, because the cap alone cannot show a run happening: it
-            counts slots handed out, so it jumps once per batch and then sits
-            still while that batch is worked. The green figure is follows that
-            landed today and moves on every single add. */}
+        {/* The bar is follows LANDED, not slots handed out. A slot is charged
+            at handout, so a row the walk never reached spends one and adds
+            nobody -- this account read 240/240 on a day it followed 196 people.
+            The handout figure trails behind as a fainter lead, and the gap
+            between the two is exactly the number of slots that bought nothing. */}
         <td
           data-label="cap"
           className="cap-col"
-          title={`${a.handedToday} of ${a.dailyCap} cap slots taken today, ${a.followedToday} followed so far`}
+          title={`${a.followedToday} followed today of a ${a.dailyCap} cap; ${a.handedToday} cap slots taken`}
         >
-          <CapBar used={a.handedToday} cap={a.dailyCap} landed={a.followedToday} />
+          <CapBar used={a.followedToday} cap={a.dailyCap} landed={a.handedToday} />
         </td>
         <td data-label="queued" className="num">
           {a.queued || ''}

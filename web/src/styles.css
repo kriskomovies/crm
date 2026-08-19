@@ -588,15 +588,24 @@ td.rowdetail::before { content: none; }
      block children of a 6px track stack, and the second one lands outside it. */
   position: relative;
 }
-.cap-fill { height: 100%; border-radius: 99px; transition: width 0.3s; }
-/* Follows that landed, drawn over the slots they spent. */
+/* The two layers swapped meaning when the bar started measuring follows. The
+   fill is now follows that LANDED and sits on top; the lead is the cap slots
+   handed out and sits behind it, faint, because it is context rather than
+   progress. The visible gap between them is slots that bought nobody. */
+.cap-fill {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  border-radius: var(--r-pill);
+  transition: width 0.3s;
+}
 .cap-lead {
   position: absolute;
   left: 0;
   top: 0;
   height: 100%;
-  border-radius: 99px;
-  background: var(--green);
+  border-radius: var(--r-pill);
+  background: var(--accent-dim);
   transition: width 0.3s;
 }
 .cap-label {
@@ -607,7 +616,10 @@ td.rowdetail::before { content: none; }
   text-align: right;
 }
 /* Reads as part of the cap figure, not as a second column. */
-.cap-done { color: var(--green); font-style: normal; }
+/* The handout figure beside the bar. Muted, not green: it is the number
+   that is ahead of the follows, and reading it as an achievement is what
+   made 240/240 look like a finished day. */
+.cap-done { color: var(--faint); font-style: normal; }
 
 /* ---- operator sign in -----------------------------------------------------
    Replaces the browser's basic-auth prompt. Centred with grid rather than
