@@ -370,7 +370,7 @@ export class TargetsService {
 
     const person = await this.prisma.person.findUnique({
       where: { personalityId_handle: { personalityId: account.personalityId, handle } },
-      select: { id: true },
+      select: { id: true, source: true },
     });
     if (!person) throw new NotFoundException('unknown handle for this personality');
 
@@ -394,6 +394,19 @@ export class TargetsService {
         note: note?.slice(0, 500),
       },
     });
+
+    // An account is seeded until it has fifty people it found by SEARCHING,
+    // which is what a `manual` row is on an account with no roster -- nothing
+    // else creates one. Counted on the way in rather than derived on the way
+    // out so the number survives the ledger being pruned, and only on a follow
+    // that actually landed: a search that found nobody taught Snapchat nothing
+    // about this account, which is the whole thing the fifty are for.
+    if (result === 'followed' && person.source === 'manual') {
+      await this.prisma.account.update({
+        where: { id: accountId },
+        data: { onboardedCount: { increment: 1 } },
+      });
+    }
   }
 
   /**

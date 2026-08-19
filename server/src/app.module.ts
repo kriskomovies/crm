@@ -15,6 +15,7 @@ import { EnrolmentService } from './enrolment/enrolment.service';
 import { ExtractDispatcher } from './pipeline/extract.dispatcher';
 import { GatewayClient } from './extraction/gateway.client';
 import { OnboardingController } from './onboarding/onboarding.controller';
+import { OnboardingService } from './onboarding/onboarding.service';
 import { AccountsController, PersonalitiesController } from './personalities/personalities.controller';
 import { PersonalitiesService } from './personalities/personalities.service';
 import { ExtractProcessor } from './pipeline/extract.processor';
@@ -63,6 +64,7 @@ import { TargetsService } from './targets/targets.service';
     EnrolmentService,
     SessionService,
     ApiKeyGuard,
+    OnboardingService,
   ],
   exports: [
     PrismaService,

@@ -26,6 +26,7 @@ import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { ApiKeyGuard } from '../auth/api-key.guard';
 import { pageSize, slicePage } from '../common/pagination';
 import { PersonalitiesService } from '../personalities/personalities.service';
+import { OnboardingService } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { FollowResult, TargetsService } from './targets.service';
 
@@ -73,6 +74,7 @@ export class TargetsController {
   constructor(
     private readonly targets: TargetsService,
     private readonly prisma: PrismaService,
+    private readonly onboarding: OnboardingService,
   ) {}
 
   private async assertOwned(accountId: string, clientId: string) {
@@ -90,9 +92,38 @@ export class TargetsController {
     @Req() req: any,
   ) {
     await this.assertOwned(accountId, req.client.id);
-    const claimed = await this.targets.claim(accountId, Math.min(limit, 100));
+    const want = Math.min(limit, 100);
+    let claimed = await this.targets.claim(accountId, want);
+
+    // A NEW ACCOUNT ASKS AND IS HANDED NOTHING, FOREVER
+    //
+    // Snapchat shows a fresh account no Quick Add suggestions, so there is no
+    // roster to photograph, nothing to extract, and therefore nothing queued for
+    // it -- and the claim above comes back empty every cycle. Seeding is tried
+    // only in exactly that state: an empty claim from an account that has not
+    // yet made its fifty searched adds. An established account always has a
+    // queue, so it never reaches this line.
+    //
+    // The re-claim is a real claim, so both caps meter these adds like any
+    // other. They ARE ordinary adds; the only difference is that the machine
+    // reaches them by searching a name instead of finding a row.
+    let onboarding = false;
+    if (claimed.targets.length === 0 && (await this.onboarding.isOnboarding(accountId))) {
+      const seeded = await this.onboarding.seed(accountId, want);
+      if (seeded > 0) {
+        claimed = await this.targets.claim(accountId, want);
+        onboarding = claimed.targets.length > 0;
+      }
+    }
+
     return {
       targets: claimed.targets,
+      // How the machine is meant to reach these people. `search` says this
+      // account has no roster and each handle must be found by name in
+      // Snapchat's own search; anything else means the ordinary walk. Sent as a
+      // word rather than a boolean because there will be a third way before
+      // there is a second product.
+      via: onboarding ? 'search' : 'roster',
       // Told explicitly so the client can back off instead of hot-polling an
       // exhausted cap.
       remainingToday: await this.targets.remainingToday(accountId),
