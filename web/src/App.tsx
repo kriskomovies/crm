@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api, type Personality } from './api';
 import { Followed } from './Followed';
+import { Import } from './Import';
 import { Login } from './Login';
 import { Personalities } from './Personalities';
 import { Settings } from './Settings';
@@ -16,6 +17,7 @@ type View =
   | { tab: 'stats' }
   | { tab: 'sheets' }
   | { tab: 'targeting' }
+  | { tab: 'import' }
   | { tab: 'settings' };
 
 export default function App() {
@@ -154,6 +156,14 @@ export default function App() {
             <span className="navlabel">Targeting</span>
           </button>
           <button
+            className={view.tab === 'import' ? 'on' : ''}
+            onClick={() => setView({ tab: 'import' })}
+            title="Import"
+          >
+            <IconUpload />
+            <span className="navlabel">Import</span>
+          </button>
+          <button
             className={view.tab === 'settings' ? 'on' : ''}
             onClick={() => setView({ tab: 'settings' })}
             title="Settings"
@@ -187,6 +197,8 @@ export default function App() {
           {view.tab === 'sheets' && <Sheets />}
 
           {view.tab === 'targeting' && <Targeting />}
+
+          {view.tab === 'import' && <Import />}
 
           {view.tab === 'settings' && <Settings />}
 
@@ -307,6 +319,17 @@ function IconExit() {
       <path d="M9.8 2.8H4.2a1.4 1.4 0 0 0-1.4 1.4v7.6a1.4 1.4 0 0 0 1.4 1.4h5.6" />
       <path d="M12 5.6 14.4 8 12 10.4" />
       <path d="M14.4 8H6.8" />
+    </svg>
+  );
+}
+
+/* A file going up: the tray, and the arrow leaving it. */
+function IconUpload() {
+  return (
+    <svg {...stroke16}>
+      <path d="M2.6 10.4v2a1.4 1.4 0 0 0 1.4 1.4h8a1.4 1.4 0 0 0 1.4-1.4v-2" />
+      <path d="M8 10.2V2.4" />
+      <path d="M5.2 5.2 8 2.4l2.8 2.8" />
     </svg>
   );
 }

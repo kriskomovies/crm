@@ -39,20 +39,8 @@ import {
 } from 'class-validator';
 
 import { ApiKeyGuard } from '../auth/api-key.guard';
-import { CSV_BOM, csvRow } from '../common/csv';
 import { PersonalitiesService } from './personalities.service';
 
-/** The CSV header row, and the order every data row is written in. */
-const CSV_COLUMNS = [
-  'handle',
-  'display name',
-  'nationality',
-  'source',
-  'state',
-  'account',
-  'handed out at',
-  'followed at',
-] as const;
 
 /**
  * A filename Content-Disposition can carry safely.
@@ -194,26 +182,45 @@ export class PersonalitiesController {
    * <a href download>, which is also what keeps the browser from ever holding
    * the file in memory.
    */
-  @Get(':id/targets.csv')
-  async targetsCsv(
+  /**
+   * The followed list as a plain text file: one handle per line, nothing else.
+   *
+   * It was a CSV of eight columns, which is the right shape for a spreadsheet
+   * and the wrong one for what this export is actually for -- feeding handles
+   * back into a machine. A new account has no Quick Add suggestions and is
+   * onboarded by searching people by name, so the list it is fed has to be a
+   * list of names. An export that comes out in the format the import takes
+   * closes that loop without anybody editing a file in between.
+   *
+   * The route keeps its .csv sibling's shape (same ownership check, same
+   * streaming, same cursor) and only the body changes: no header row, no
+   * quoting, no BOM -- a BOM would arrive as an invisible character on the front
+   * of the first handle and that handle would never match anybody.
+   */
+  @Get(':id/targets.txt')
+  async targetsTxt(
     @Param('id') id: string,
     @Req() req: any,
     @Res() res: any,
     @Query('q') q?: string,
     @Query('state') state?: string,
+    // Comma-separated: `high`, or `high,medium`. Absent or complete means every
+    // confidence, so the plain URL still exports the whole list.
+    @Query('conf') conf?: string,
   ) {
     // Ownership and the state value are settled before a byte is written. Once
     // headers are out, a 404 can only present as a truncated download.
-    const { name, rows } = await this.personalities.exportTargets(req.client.id, id, q, state);
+    const { name, rows } = await this.personalities.exportTargets(
+      req.client.id, id, q, state, conf);
 
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="${safeName(name)}-${state || 'all'}.csv"`,
+      // The confidence goes in the filename because these files are the unit of
+      // exchange between two systems -- a folder of them called
+      // "kris-followed.txt" three times over is unusable.
+      `attachment; filename="${safeName(name)}-${state || 'all'}${conf ? `-${safeName(conf)}` : ''}.txt"`,
     );
-    // No Content-Length is available -- the row count is not known without the
-    // COUNT this export exists to avoid -- so the response is chunked.
-    await write(res, CSV_BOM + csvRow(CSV_COLUMNS));
     for await (const batch of rows) {
       // The operator closed the tab. Returning ends the for-await, which closes
       // the generator and its cursor, rather than paging the rest of the ledger
@@ -221,19 +228,11 @@ export class PersonalitiesController {
       if (res.destroyed) return;
       let chunk = '';
       for (const r of batch) {
-        chunk += csvRow([
-          r.handle,
-          r.displayName,
-          r.nationality,
-          r.source,
-          r.state,
-          r.account,
-          // ISO 8601 in UTC. Not a locale-formatted date: the operator's
-          // spreadsheet would reinterpret an ambiguous one by its own locale,
-          // and this at least sorts correctly as text everywhere.
-          r.handedOutAt,
-          r.followedAt,
-        ]);
+        // A row with no handle cannot exist -- it is the ledger's natural key --
+        // but an empty line in a file of handles would import as one, so it is
+        // skipped rather than trusted.
+        if (r.handle) chunk += `${r.handle}
+`;
       }
       await write(res, chunk);
     }

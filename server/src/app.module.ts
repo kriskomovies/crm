@@ -14,6 +14,7 @@ import {
 import { EnrolmentService } from './enrolment/enrolment.service';
 import { ExtractDispatcher } from './pipeline/extract.dispatcher';
 import { GatewayClient } from './extraction/gateway.client';
+import { OnboardingController } from './onboarding/onboarding.controller';
 import { AccountsController, PersonalitiesController } from './personalities/personalities.controller';
 import { PersonalitiesService } from './personalities/personalities.service';
 import { ExtractProcessor } from './pipeline/extract.processor';
@@ -93,6 +94,7 @@ export class CoreModule {}
     MachineEnrolmentController,
     EnrolmentController,
     SessionController,
+    OnboardingController,
   ],
 })
 export class AppModule {}

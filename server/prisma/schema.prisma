@@ -183,6 +183,7 @@ model Client {
   personalities Personality[]
   filterRules   FilterRule[]
   apiKeys       ApiKey[]
+  onboarding    OnboardingHandle[]
 
   @@map("clients")
 }
@@ -251,13 +252,55 @@ model Account {
   displayName   String?
   machine       String?
 
+  /// How many people this account has added BY SEARCH, which is how a new
+  /// account is seeded when Snapchat suggests it nobody. It decides whether the
+  /// account still needs onboarding, and it is a count rather than a flag so
+  /// that "half way through" is a state the console can show rather than infer.
+  onboardedCount Int @default(0)
+
   personality Personality  @relation(fields: [personalityId], references: [id], onDelete: Cascade)
   sheets      Sheet[]
   assignments Assignment[]
   hides       Hide[]
+  onboarding  OnboardingHandle[]
 
   @@unique([personalityId, label])
   @@map("accounts")
+}
+
+/// Handles to seed a brand-new account with.
+///
+/// A fresh Snapchat account has no Quick Add suggestions at all, so the walk has
+/// nothing to walk and the ledger has nobody to offer it. It is onboarded by
+/// searching people by name instead, which means it needs a list of names -- and
+/// these are pasted in by the operator, not read off a contact sheet.
+///
+/// NOT a Person row, deliberately. Every row in that table carries what the
+/// vision model read -- display name, what the avatar presents as, nationality,
+/// confidence -- and filter() drops a row whose signals are missing, so an
+/// import would be swallowed the moment it arrived. This is a pool to draw
+/// from; a person becomes a Person when an account is actually given them.
+model OnboardingHandle {
+  id              String    @id @default(uuid())
+  clientId        String
+  handle          String
+  /// Which account spent it, and when. Kept rather than deleted so the same
+  /// person is never handed to a second account of the same client.
+  usedByAccountId String?
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  client Client   @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  /// SetNull, not Cascade: deleting an account must not delete the record that
+  /// its handle was already spent.
+  account Account? @relation(fields: [usedByAccountId], references: [id], onDelete: SetNull)
+
+  /// Re-importing the same file is how an operator tops the list up, and it
+  /// must not double it.
+  @@unique([clientId, handle])
+  /// "what is left to hand out" -- the only read the onboarding claim makes.
+  @@index([clientId, usedAt])
+  @@map("onboarding_handles")
 }
 
 /// One person this account has swiped off its own Quick Add roster.

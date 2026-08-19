@@ -693,6 +693,7 @@ export class PersonalitiesService {
     personalityId: string,
     q?: string,
     state?: string,
+    conf?: string,
   ): Promise<{ name: string; rows: AsyncGenerator<ExportRow[]> }> {
     // Not assertExists: this needs the personality's NAME for the filename, and
     // the per-account cap that one returns means nothing to an export. Same
@@ -703,7 +704,7 @@ export class PersonalitiesService {
     });
     if (!personality) throw new NotFoundException('personality not found');
 
-    const where = ledgerWhere(personalityId, q, state);
+    const where = ledgerWhere(personalityId, q, state, conf);
     return { name: personality.name, rows: this.exportPages(where) };
   }
 
@@ -790,10 +791,30 @@ function assignmentState(raw: string): AssignmentState {
  * -- an export that quietly searched or filtered differently from the list
  * above it is a file the operator has no way to notice is wrong.
  */
+/**
+ * Which confidences an operator may ask for, and what an unrecognised one means.
+ *
+ * The extractor writes `high`, `medium`, `low` or nothing at all -- nothing when
+ * the model gave no confidence for the nationality it read. That fourth case is
+ * NOT low: it is unknown, and lumping it in with low would quietly export people
+ * nobody has an opinion about as people we have a poor opinion of.
+ */
+const CONFIDENCES = ['high', 'medium', 'low'] as const;
+
+function confidenceFilter(conf?: string): Prisma.PersonWhereInput {
+  const wanted = (conf ?? '')
+    .split(',')
+    .map((c) => c.trim().toLowerCase())
+    .filter((c) => (CONFIDENCES as readonly string[]).includes(c));
+  if (wanted.length === 0 || wanted.length === CONFIDENCES.length) return {};
+  return { nationalityConf: { in: wanted } };
+}
+
 function ledgerWhere(
   personalityId: string,
   q?: string,
   state?: string,
+  conf?: string,
 ): Prisma.PersonWhereInput {
   // Bounded before it reaches the database. `contains` becomes a LIKE with the
   // caller's text inlined between two wildcards, and neither the planner nor
@@ -810,6 +831,7 @@ function ledgerWhere(
         }
       : {}),
     ...(state ? { assignment: { state: assignmentState(state) } } : {}),
+    ...confidenceFilter(conf),
   };
 }
 

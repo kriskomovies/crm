@@ -377,6 +377,31 @@ function asRuleOptions(raw: unknown): RuleOptions {
   };
 }
 
+/** One row of the onboarding pool. `usedAt` set means it has been spent. */
+export type ImportedHandle = {
+  id: string;
+  handle: string;
+  usedAt: string | null;
+  createdAt: string;
+  account: string | null;
+};
+
+export type OnboardingPool = {
+  total: number;
+  used: number;
+  available: number;
+  items: ImportedHandle[];
+};
+
+/** What became of every line of a pasted file. Four counts, because "added 12"
+ *  out of a fifty-line file is a question rather than an answer. */
+export type ImportResult = {
+  added: number;
+  duplicate: number;
+  invalid: string[];
+  total: number;
+};
+
 export interface Session {
   authenticated: boolean;
   client?: { id: string; name: string };
@@ -528,11 +553,29 @@ export const api = {
    * that looks complete. The session cookie rides along with the navigation,
    * which is why no token goes in the query string.
    */
-  followedCsvUrl: (id: string, opts: { q?: string } = {}) => {
+  /** One handle per line, which is what the Import screen takes. `conf` narrows
+   *  it to the confidences the extractor gave the nationality it read -- an
+   *  export of `high` alone is the list worth carrying to another system. */
+  followedTxtUrl: (id: string, opts: { q?: string; conf?: string[] } = {}) => {
     const p = new URLSearchParams({ state: 'followed' });
     if (opts.q) p.set('q', opts.q);
-    return `/api/personalities/${id}/targets.csv?${p}`;
+    if (opts.conf?.length) p.set('conf', opts.conf.join(','));
+    return `/api/personalities/${id}/targets.txt?${p}`;
   },
+
+  onboardingPool: () => req<OnboardingPool>('/api/onboarding'),
+
+  importHandles: (text: string) =>
+    req<ImportResult>('/api/onboarding', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  clearOnboarding: (which: 'used' | 'all') =>
+    req<{ deleted: number }>('/api/onboarding', {
+      method: 'DELETE',
+      body: JSON.stringify({ which }),
+    }),
 
   attach: (id: string, handles: string[]) =>
     req<AttachResult>(`/api/personalities/${id}/targets`, {

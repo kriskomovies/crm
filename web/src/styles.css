@@ -222,6 +222,15 @@ nav svg, .sidebar-foot svg { flex: 0 0 auto; }
 /* Targeting renders .card without a rule of its own, so it was drawing as bare
    text on the page background while everything around it sat on a surface. It
    is a panel without a head. */
+/* A file input dressed as a button: the control itself is hidden, and the label
+   around it is what the operator presses. It has to look pressable, and a
+   <label> gets none of button's own styling. */
+label.button {
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -309,7 +318,15 @@ input, select, textarea {
   min-width: 0;
 }
 input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
-textarea { resize: vertical; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 13px; }
+/* Tall enough that a fifty-handle import is not read through a two-line window,
+   and monospace because a file of handles is scanned rather than read. */
+textarea {
+  resize: vertical;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 13px;
+  min-height: 180px;
+  line-height: 1.6;
+}
 input.mini { width: 68px; padding: 5px 8px; text-align: right; }
 
 .row-form {

@@ -3,6 +3,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, isAbort, type Personality, type Target } from './api';
 import { when } from './ui';
 
+/** What the extractor writes for the nationality it read. */
+const CONFIDENCES = ['high', 'medium', 'low'] as const;
+
 /**
  * The people an account actually followed, and a way to take them out.
  *
@@ -19,6 +22,9 @@ import { when } from './ui';
 export function Followed({ personalities }: { personalities: Personality[] }) {
   const [personalityId, setPersonalityId] = useState('');
   const [q, setQ] = useState('');
+  // Every confidence by default, so the button exports the whole list until
+  // somebody narrows it.
+  const [conf, setConf] = useState<string[]>([...CONFIDENCES]);
   const [items, setItems] = useState<Target[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -94,19 +100,37 @@ export function Followed({ personalities }: { personalities: Personality[] }) {
           onChange={(e) => setQ(e.target.value)}
         />
         <span className="muted small">{items.length} shown</span>
+        {/* Which confidences the export carries. Not a filter on the table:
+            the table is what this personality followed, and that is not in
+            question -- this is about which of them are worth handing to another
+            system. `high` alone is the usual answer. */}
+        <div className="seg" title="confidence to export">
+          {CONFIDENCES.map((c) => (
+            <button
+              key={c}
+              className={conf.includes(c) ? 'on' : ''}
+              onClick={() =>
+                setConf(conf.includes(c) ? conf.filter((x) => x !== c) : [...conf, c])
+              }
+            >
+              {c}
+            </button>
+          ))}
+        </div>
         {/* A plain link to a route that streams, not a fetch. Built here instead
             it would mean paging every row into memory and then copying the lot
             into a blob; worse, a run that failed on page 73 would save a short
             file that looks complete. The session cookie rides along with the
             navigation, so nothing needs a token in the URL. */}
-        <a className="button" href={api.followedCsvUrl(selected, { q })} download>
-          Export CSV
+        <a className="button" href={api.followedTxtUrl(selected, { q, conf })} download>
+          Export {conf.length && conf.length < 3 ? conf.join('+') : 'all'}
         </a>
       </div>
 
       <p className="muted small">
         Everyone this personality has actually followed. The export is this same list under
-        this same search — all of it, not only the rows loaded below.
+        this same search — all of it, not only the rows loaded below — as one handle per
+        line, which is the format the import takes.
       </p>
 
       {err && <p className="error banner">{err}</p>}
