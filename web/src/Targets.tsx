@@ -127,6 +127,12 @@ export function Targets({ p, onBack }: { p: Personality; onBack: () => void }) {
                 </td>
                 <td data-label="state">
                   <Pill value={t.state} />
+                  {/* What the machine said when it ended the attempt. The server
+                      has sent this since report() was written and nothing read
+                      it, so "queued" and "the walk never found this row" looked
+                      identical from here -- which is exactly the question an
+                      operator asks of a row that never became a follow. */}
+                  {t.note && <div className="muted small conf">{t.note}</div>}
                 </td>
                 <td data-label="account">
                   {t.account ? <code>{t.account}</code> : <span className="muted">—</span>}

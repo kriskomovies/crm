@@ -371,9 +371,13 @@ td { padding: 11px 14px; border-bottom: 1px solid var(--line-soft); vertical-ali
 tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--inset); }
 tr.off { opacity: 0.5; }
-.num { text-align: right; font-variant-numeric: tabular-nums; }
+/* Left, like everything else. The convention is to right-align figures so the
+   digits line up, and the operator asked for one alignment across the whole
+   console instead -- so the columns keep tabular figures, which is what makes a
+   column of numbers scannable, and give up the edge they were aligned to. */
+.num { text-align: left; font-variant-numeric: tabular-nums; }
 .cap-col { min-width: 180px; }
-.actions { display: flex; gap: 6px; align-items: center; justify-content: flex-end; }
+.actions { display: flex; gap: 6px; align-items: center; justify-content: flex-start; }
 
 /* A full-width cell under a row, for a control that has to explain itself
    before it fires. It opts out of the label/value stacking below: every other
@@ -561,6 +565,13 @@ td.rowdetail::before { content: none; }
 .pill-extracted { background: var(--green-dim); color: var(--green); }
 .pill-partial { background: var(--amber-dim); color: var(--amber); }
 .pill-received, .pill-extracting { background: var(--blue-dim); color: var(--blue); }
+
+/* An account's own verdict, not a state the server reported. Green means it is
+   working right now, which is the one thing green is allowed to mean here. */
+.health-healthy { background: var(--green-dim); color: var(--green); }
+.health-needs-a-check { background: var(--amber-dim); color: var(--amber); }
+.health-blocked { background: var(--red-dim); color: var(--red); }
+.health-paused { background: var(--inset); color: var(--muted); }
 
 .src { font-size: 11.5px; color: var(--muted); }
 .src-manual { color: var(--violet); }

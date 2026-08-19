@@ -77,7 +77,14 @@ export type Target = {
    *  Invalid Date, which is also what happens against a server that has not
    *  shipped these two yet. */
   handedOutAt: string | null;
-  resultAt: string | null;
+  /** When the follow LANDED. The server calls it `followedAt` and always has;
+   *  the name here used to be `resultAt`, which is the column behind it rather
+   *  than the field on the wire, so every row read undefined. */
+  followedAt: string | null;
+  /** What the machine said when it ended the attempt -- "not reached -- the walk
+   *  covered 10 page(s) of Quick Add and no row on them read as this handle" and
+   *  the like. Sent since report() was written, read by nothing until now. */
+  note: string | null;
 };
 
 export type AttachResult = {

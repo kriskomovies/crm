@@ -18,11 +18,10 @@ import { api, type Settings as SettingsValues } from './api';
  * using its own config file. The rows are ordered so that asymmetry reads
  * top-to-bottom: the enforced numbers together, the served one last.
  *
- * The model that reads the sheets is last of all, under its own heading. It is
- * not a pacing number, but it is the other decision made once for the whole
- * client, and the cheap default trades accuracy for cost -- so the measured
- * trade-off is printed above the Save button rather than left to be discovered
- * in the spend column or, worse, in who got followed.
+ * The extraction model is deliberately NOT here. It is a server-side setting
+ * with a closed list, it is not something an operator watching a fleet needs to
+ * change, and every screen that printed it was printing the same string on
+ * every row.
  */
 const LIMITS = {
   dailyCapPerAccount: { min: 0, max: 2000 },
@@ -50,12 +49,8 @@ export function Settings() {
   const [saved, setSaved] = useState<SettingsValues | null>(null);
   const [cap, setCap] = useState('');
   const [sessionCap, setSessionCap] = useState('');
-  const [model, setModel] = useState('');
   // Served, never hardcoded: the same reason the targeting screen takes its
   // vocabulary from the server. The set is checked server-side because an
-  // unlisted model does not fail validation, it fails every extraction for this
-  // client, and a list baked in here is a list that can drift out of step.
-  const [models, setModels] = useState<string[]>([]);
   // Not `window`: this component has no other reason to touch the global, and a
   // shadow that only bites in a later edit is not worth the shorter name.
   const [windowMins, setWindowMins] = useState('');
@@ -79,12 +74,6 @@ export function Settings() {
         setSessionCap(String(s.sessionCapPerAccount ?? ''));
         setWindowMins(String(s.sessionWindowMinutes ?? ''));
         setPace(String(s.followPaceSeconds));
-        // Same `??` guard and for the same reason as the pair above, and one
-        // more besides: `String(undefined)` here would put "undefined" into a
-        // <select> whose options do not contain it, which renders as the first
-        // option and reads as a model this client is not using.
-        setModel(String(s.extractionModel ?? ''));
-        setModels(Array.isArray(s.models) ? s.models : []);
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
   }, []);
@@ -100,15 +89,7 @@ export function Settings() {
     ((nextCap !== null && nextCap !== saved.dailyCapPerAccount) ||
       (nextSessionCap !== null && nextSessionCap !== saved.sessionCapPerAccount) ||
       (nextWindow !== null && nextWindow !== saved.sessionWindowMinutes) ||
-      (nextPace !== null && nextPace !== saved.followPaceSeconds) ||
-      (model !== '' && model !== saved.extractionModel));
-
-  // What is saved always appears, even if the server has stopped offering it.
-  // A <select> whose value is not among its options shows the FIRST option
-  // instead, so without this union the screen would display a model this client
-  // is not using and merely opening the tab would make it look unchanged.
-  const options = model === '' || models.includes(model) ? models : [model, ...models];
-
+      (nextPace !== null && nextPace !== saved.followPaceSeconds));
   const save = async () => {
     if (!dirty || busy) return;
     setBusy(true);
@@ -120,7 +101,6 @@ export function Settings() {
         ...(nextSessionCap === null ? {} : { sessionCapPerAccount: nextSessionCap }),
         ...(nextWindow === null ? {} : { sessionWindowMinutes: nextWindow }),
         ...(nextPace === null ? {} : { followPaceSeconds: nextPace }),
-        ...(model === '' ? {} : { extractionModel: model }),
       });
       const next = {
         dailyCapPerAccount: out.dailyCapPerAccount,
@@ -134,9 +114,8 @@ export function Settings() {
       setSessionCap(String(next.sessionCapPerAccount));
       setWindowMins(String(next.sessionWindowMinutes));
       setPace(String(next.followPaceSeconds));
-      setModel(String(next.extractionModel ?? ''));
       setNote(
-        'Saved. Both caps apply to the next handout and the model to the next sheet extracted; the pace applies the next time each machine claims.',
+        'Saved. Both caps apply to the next handout; the pace applies the next time each machine claims.',
       );
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -153,8 +132,8 @@ export function Settings() {
         <div>
           <h2>Pacing</h2>
           <p className="muted small">
-            Everything here applies to every account this client runs. There are no per-account
-            caps, and one model reads every sheet.
+            Everything here applies to every account this client runs. There are no
+            per-account caps.
           </p>
         </div>
       </header>
@@ -234,42 +213,6 @@ export function Settings() {
         </span>
       </div>
 
-      <div className="row-form">
-        <h3>Sheet reading</h3>
-      </div>
-
-      <div className="row-form inset">
-        <label className="cap-input">
-          model
-          <select
-            className="model-select"
-            value={model}
-            disabled={busy || options.length === 0}
-            onChange={(e) => setModel(e.target.value)}
-          >
-            {options.map((m) => (
-              <option key={m} value={m}>
-                {m}
-              </option>
-            ))}
-          </select>
-        </label>
-        <span className="muted small">
-          which model reads every sheet. The list is closed server-side — anything else would
-          fail every extraction.
-        </span>
-      </div>
-
-      {/* One line, not the scored table that was here. The table was three
-          rows and three paragraphs of caveat for a decision taken once; the
-          number that actually changes the decision is the leak count, and it
-          fits on a line. The full matrix lives in vlm_eval/FORMAT-AB.md. */}
-      <p className="muted small inset">
-        Cheap model: <strong>3 of 5</strong> women let through and $0.0233 a sheet, against{' '}
-        <strong>1 of 5</strong> and $0.1282 for <code>gemini-3.6-flash</code>. One scored run of
-        99 profiles, so five is the whole sample.
-      </p>
-
       <div className="row-form inset">
         <button className="primary" onClick={() => void save()} disabled={!dirty || busy}>
           {busy ? 'Saving…' : 'Save'}
@@ -278,10 +221,6 @@ export function Settings() {
         {note && !err && <span className="muted small">{note}</span>}
       </div>
 
-      <p className="muted small inset">
-        A young account hits Snapchat&apos;s add-cooldown at roughly 40 adds a day in testing.
-        These are the rate limit that keeps an account alive, not a throughput knob.
-      </p>
     </section>
   );
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react';
 
 import { api, isAbort, type Personality, type Stats as StatsData, type StatsDay } from './api';
-import { CapBar, count, money, rate } from './ui';
+import { count, money, rate } from './ui';
 
 const RANGES = [7, 30, 90];
 
@@ -71,7 +71,6 @@ export function Stats({ personalities }: { personalities: Personality[] }) {
   }, [selected, days]);
 
   const t = data?.totals;
-  const attempted = t ? t.followed + t.failed : 0;
 
   return (
     <>
@@ -117,11 +116,6 @@ export function Stats({ personalities }: { personalities: Personality[] }) {
               value={count(t.followed)}
               sub={`${count(t.failed)} failed · ${count(t.skipped)} skipped`}
             />
-            <Tile
-              label="follow success"
-              value={rate(t.followed, attempted)}
-              sub={`${count(attempted)} attempted`}
-            />
           </div>
 
           <p className="muted small pipeline">
@@ -147,97 +141,6 @@ export function Stats({ personalities }: { personalities: Personality[] }) {
               <DayChart days={data.byDay} metric={metric} />
             </div>
           </section>
-
-          <section className="panel">
-            <header className="panel-head">
-              <div>
-                <h3>Where handles came from</h3>
-                <p className="muted small">
-                  Read off a contact sheet by the vision model, or typed in.
-                </p>
-              </div>
-            </header>
-            <SourceSplit bySource={data.bySource} />
-          </section>
-
-          <Table
-            title="By personality"
-            empty={data.byPersonality.length === 0}
-            head={
-              <tr>
-                <th>personality</th>
-                <th className="num">sheets</th>
-                <th className="num">targets</th>
-                <th className="num">queued</th>
-                <th className="num">followed</th>
-                <th className="num">spend</th>
-              </tr>
-            }
-          >
-            {data.byPersonality.map((p) => (
-              <tr key={p.id}>
-                <td data-label="personality">
-                  {p.name || <span className="muted">—</span>}
-                </td>
-                <td data-label="sheets" className="num">
-                  {count(p.sheets)}
-                </td>
-                <td data-label="targets" className="num">
-                  {count(p.targets)}
-                </td>
-                <td data-label="queued" className="num">
-                  {count(p.queued)}
-                </td>
-                <td data-label="followed" className="num">
-                  {count(p.followed)}
-                </td>
-                <td data-label="spend" className="num">
-                  {money(p.usd, 2)}
-                </td>
-              </tr>
-            ))}
-          </Table>
-
-          <Table
-            title="By account"
-            empty={data.byAccount.length === 0}
-            head={
-              <tr>
-                <th>account</th>
-                <th>personality</th>
-                <th className="cap-col">daily cap used</th>
-                <th className="num">followed</th>
-                <th className="num">failed</th>
-                <th className="num">success</th>
-              </tr>
-            }
-          >
-            {data.byAccount.map((a) => (
-              <tr key={a.id}>
-                <td data-label="account">
-                  <code>{a.label}</code>
-                </td>
-                <td data-label="personality" className="muted">
-                  {a.personality || '—'}
-                </td>
-                <td data-label="cap" className="cap-col">
-                  <CapBar used={a.handedToday} cap={a.dailyCap} />
-                </td>
-                <td data-label="followed" className="num">
-                  {count(a.followed)}
-                </td>
-                <td data-label="failed" className="num">
-                  {count(a.failed)}
-                </td>
-                {/* Derived from the two columns beside it rather than read from
-                    successRate: the contract does not pin that field to a
-                    fraction or a percentage, and 0.6 vs 60 is not guessable. */}
-                <td data-label="success" className="num">
-                  {rate(a.followed, a.followed + a.failed)}
-                </td>
-              </tr>
-            ))}
-          </Table>
 
           <Table
             title="By country"
@@ -269,39 +172,6 @@ export function Stats({ personalities }: { personalities: Personality[] }) {
             ))}
           </Table>
 
-          <Table
-            title="By model"
-            empty={data.byModel.length === 0}
-            head={
-              <tr>
-                <th>model</th>
-                <th className="num">sheets</th>
-                <th className="num">spend</th>
-                <th className="num">avg seconds</th>
-                <th className="num">avg profiles</th>
-              </tr>
-            }
-          >
-            {data.byModel.map((m, i) => (
-              <tr key={m.model ?? `unknown-${i}`}>
-                <td data-label="model">
-                  {m.model ? <code>{m.model}</code> : <span className="muted">unknown</span>}
-                </td>
-                <td data-label="sheets" className="num">
-                  {count(m.sheets)}
-                </td>
-                <td data-label="spend" className="num">
-                  {money(m.usd, 4)}
-                </td>
-                <td data-label="avg seconds" className="num">
-                  {m.avgSeconds.toFixed(1)}
-                </td>
-                <td data-label="avg profiles" className="num">
-                  {m.avgProfiles.toFixed(1)}
-                </td>
-              </tr>
-            ))}
-          </Table>
         </>
       )}
 
@@ -372,29 +242,6 @@ function DayChart({ days, metric }: { days: StatsDay[]; metric: Metric }) {
         <span>{shortDate(days[days.length - 1].date)}</span>
       </div>
     </>
-  );
-}
-
-function SourceSplit({ bySource }: { bySource: { extraction: number; manual: number } }) {
-  const total = bySource.extraction + bySource.manual;
-  const share = total > 0 ? (bySource.extraction / total) * 100 : 0;
-  return (
-    <div className="inset">
-      <div className="split">
-        <div className="split-a" style={{ width: `${share}%` }} />
-        <div className="split-b" style={{ width: `${total > 0 ? 100 - share : 0}%` }} />
-      </div>
-      <div className="split-legend">
-        <span>
-          <i className="key key-a" /> extraction <strong>{count(bySource.extraction)}</strong>{' '}
-          <span className="muted">{rate(bySource.extraction, total)}</span>
-        </span>
-        <span>
-          <i className="key key-b" /> manual <strong>{count(bySource.manual)}</strong>{' '}
-          <span className="muted">{rate(bySource.manual, total)}</span>
-        </span>
-      </div>
-    </div>
   );
 }
 

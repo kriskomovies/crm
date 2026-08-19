@@ -60,7 +60,6 @@ export function Sheets() {
               <th className="num">new handles</th>
               <th className="num">seconds</th>
               <th className="num">cost</th>
-              <th>model</th>
             </tr>
           </thead>
           <tbody>
@@ -98,9 +97,6 @@ export function Sheets() {
                 </td>
                 <td data-label="cost" className="num">
                   {money(s.usd, 4)}
-                </td>
-                <td data-label="model" className="muted">
-                  {s.model ?? '—'}
                 </td>
               </tr>
             ))}

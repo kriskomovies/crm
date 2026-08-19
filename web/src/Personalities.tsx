@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { api, type Account, type CapReset, type Personality } from './api';
-import { CapBar } from './ui';
+import { CapBar, HealthPill } from './ui';
 
 /**
  * The main screen: every personality, its accounts, and how much of each
@@ -105,7 +105,7 @@ function PersonalityCard({
         <div>
           <h2>{p.name}</h2>
           <p className="muted small">
-            {p.client} · {p.model} · <strong>{p.people}</strong> handles attached
+            {p.client} · <strong>{p.people}</strong> handles attached
             {p.rejected > 0 && (
               <>
                 {' · '}
@@ -161,6 +161,7 @@ function PersonalityCard({
               <thead>
                 <tr>
                   <th>account</th>
+                  <th>status</th>
                   <th className="cap-col">daily cap used</th>
                   {/* The three counts that need explaining carry it in a title
                       rather than in prose under the table. The prose was two
@@ -174,6 +175,9 @@ function PersonalityCard({
                   </th>
                   <th className="num" title="Handles a sibling account of this personality already followed. One person can be assigned once, so this account can never be handed them.">
                     already followed
+                  </th>
+                  <th className="num" title="Handles the filter dropped, so no account was ever given them. A personality-wide number: a drop leaves a person with no assignment, so it reads the same on every row of this card.">
+                    dropped
                   </th>
                   <th></th>
                 </tr>
@@ -243,6 +247,12 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
         <td data-label="account">
           <code>{a.label}</code>
         </td>
+        {/* Why this row is worth looking at, worked out from the counts printed
+            further along it. An account being refused adds used to look exactly
+            like one having a quiet morning. */}
+        <td data-label="status">
+          <HealthPill a={a} />
+        </td>
         {/* Two numbers, because the cap alone cannot show a run happening: it
             counts slots handed out, so it jumps once per batch and then sits
             still while that batch is worked. The green figure is follows that
@@ -278,6 +288,18 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
           title="followed under a sibling account of this personality, so this one can never be handed them"
         >
           {a.alreadyFollowed || ''}
+        </td>
+        {/* Personality-wide, so it prints the same figure on every row of the
+            card -- muted for exactly that reason. It is here because the roster
+            has to add up: what the walk met was followed, already held, or
+            dropped, and dropped was the only one of the three with nowhere to
+            be read. */}
+        <td
+          data-label="dropped"
+          className="num muted"
+          title="dropped by the filter, so no account was ever given them — a personality-wide number"
+        >
+          {a.rejected || ''}
         </td>
         <td data-label="" className="actions">
           {err && <span className="error small">{err}</span>}

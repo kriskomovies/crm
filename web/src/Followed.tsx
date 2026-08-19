@@ -119,8 +119,8 @@ export function Followed({ personalities }: { personalities: Personality[] }) {
               <th>display name</th>
               <th>origin</th>
               <th>account</th>
-              <th>handed out</th>
               <th>followed</th>
+              <th>handed out</th>
             </tr>
           </thead>
           <tbody>
@@ -137,10 +137,13 @@ export function Followed({ personalities }: { personalities: Personality[] }) {
                 <td data-label="account">
                   {t.account ? <code>{t.account}</code> : <span className="muted">—</span>}
                 </td>
-                {/* An older server does not send these two at all. when() reads
-                    a missing one as an em dash rather than an Invalid Date. */}
+                {/* `followedAt`, not `resultAt`. The server has always sent the
+                    first and this read the second, so the column every row on
+                    this screen exists to show printed an em dash for all of
+                    them. Outcome before handout: what happened matters more
+                    than when it was given out. */}
+                <td data-label="followed">{when(t.followedAt)}</td>
                 <td data-label="handed out">{when(t.handedOutAt)}</td>
-                <td data-label="followed">{when(t.resultAt)}</td>
               </tr>
             ))}
           </tbody>
