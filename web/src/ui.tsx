@@ -68,6 +68,69 @@ export function CapBar({ used, cap, landed }: { used: number; cap: number; lande
   );
 }
 
+/**
+ * Whether this account needs looking at, from the counts already on its row.
+ *
+ * The operator's dominant anxiety is account death, and the only signal for it
+ * used to be a `failed today` integer sitting among five other integers. A
+ * machine whose adds are being refused looked exactly like one having a quiet
+ * morning: both show small numbers.
+ *
+ *   paused        the operator turned it off; nothing is wrong with it
+ *   blocked       it has failed repeatedly today and landed NOTHING. That is
+ *                 what Snapchat refusing adds looks like from here.
+ *   needs a check a real SHARE of what it tried today failed
+ *   healthy       everything else
+ *
+ * The share is the whole rule, and the first version of it was wrong: it also
+ * flagged any account with three failures whatever it had followed, so haileodx
+ * -- 196 followed, 11 missed, 5% -- read the same as an account that could not
+ * add anybody. A count of misses is not a health signal on its own. Most of them
+ * are "not reached": a row the walk never got to before the roster ran out of
+ * pages, which says something about the roster and nothing about the account.
+ *
+ * A minimum of three failures still guards the share, so one miss out of two
+ * attempts early in the day does not read as 50% and cry wolf.
+ *
+ * "Today" is the only scope there is: a reported failure goes back to the queue
+ * and is offered again another day, so there is no terminal failed row to count.
+ */
+export type Health = { state: 'healthy' | 'needs a check' | 'blocked' | 'paused'; why: string };
+
+export function health(a: {
+  enabled: boolean;
+  failedToday: number;
+  followedToday: number;
+}): Health {
+  const failed = num(a.failedToday);
+  const landed = num(a.followedToday);
+  if (!a.enabled) return { state: 'paused', why: 'paused by the operator' };
+  if (failed === 0) return { state: 'healthy', why: 'nothing has failed today' };
+  if (failed >= 3 && landed === 0) {
+    return {
+      state: 'blocked',
+      why: `${failed} attempts today and not one landed — Snapchat may be refusing adds`,
+    };
+  }
+  const attempted = failed + landed;
+  const share = attempted > 0 ? failed / attempted : 0;
+  const why = `${failed} of ${attempted} attempts failed today (${Math.round(share * 100)}%)`;
+  if (failed >= 3 && share >= 0.25) return { state: 'needs a check', why };
+  return { state: 'healthy', why };
+}
+
+/** The same verdict as a pill. Its own class rather than Pill's, because a state
+ *  the server reported and a verdict this file worked out are different kinds of
+ *  thing and should not be able to drift into one stylesheet rule. */
+export function HealthPill({ a }: { a: Parameters<typeof health>[0] }) {
+  const h = health(a);
+  return (
+    <span className={`pill health-${h.state.replace(/ /g, '-')}`} title={h.why}>
+      {h.state}
+    </span>
+  );
+}
+
 /** Thousands separators, because six-figure profile counts are unreadable raw. */
 export const count = (v: unknown): string => num(v).toLocaleString();
 
