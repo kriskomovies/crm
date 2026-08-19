@@ -3,17 +3,48 @@
    scrolls inside .scroll-x so the page body never scrolls sideways. */
 
 :root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --inset: #1b1f28;
-  --line: #262b36;
-  --text: #e6e9ef;
-  --muted: #8b94a7;
-  --accent: #5b9cff;
-  --green: #3fb950;
-  --amber: #d29922;
-  --red: #f2555a;
-  --violet: #a371f7;
+  /* Surfaces run darkest-to-lightest: the page, the cards standing on it, and
+     the insets inside those. Each step is small on purpose -- the separation
+     comes from --line, not from contrast, so a panel reads as an edge rather
+     than as a lighter rectangle. */
+  --bg: #0a0e16;
+  --panel: #111725;
+  --inset: #161d2c;
+  --line: #1e2739;
+  --line-soft: #182034;
+
+  --text: #e5e9f0;
+  --muted: #7e8a9e;
+  --faint: #5d687c;
+
+  /* Indigo is the only colour that means "you can press this". Everything else
+     in the palette reports state, so an accent used for anything but action
+     makes the two indistinguishable at a glance. */
+  --accent: #6d5ce7;
+  --accent-hi: #8271ff;
+  --accent-dim: #1c1a3a;
+
+  /* State. Green is reserved for a thing that is working RIGHT NOW -- a running
+     account, a healthy proxy -- which is why it is a brighter mint than the old
+     leaf green and never appears on a button that merely navigates. */
+  --green: #22c87e;
+  --green-dim: #0f2c22;
+  --amber: #e0a33a;
+  --amber-dim: #2b2110;
+  --red: #f0555f;
+  --red-dim: #2e161b;
+  --blue: #5b9cff;
+  --blue-dim: #14203a;
+  --violet: #a78bfa;
+  --violet-dim: #221a3c;
+
+  /* One radius scale. Cards, controls, then pills. */
+  --r-card: 12px;
+  --r-ctl: 8px;
+  --r-pill: 999px;
+
+  --sidebar: 196px;
+  --sidebar-tight: 58px;
 }
 
 * { box-sizing: border-box; }
@@ -33,18 +64,67 @@ code {
   overflow-wrap: anywhere;
 }
 
-.app { max-width: 1280px; margin: 0 auto; padding: 16px 14px 72px; }
-@media (min-width: 720px) { .app { padding: 24px 20px 72px; } }
+/* ---------------------------------------------------------------- shell */
+
+/* Sidebar beside content, and the content is full-bleed rather than a centred
+   column. The tables here are wide -- a ledger row carries a handle, a state, a
+   cap bar and four counts -- and a 1280px column was spending its margins on
+   whitespace while the table scrolled inside itself. */
+
+.app { min-height: 100vh; }
+@media (min-width: 900px) {
+  .app { display: grid; grid-template-columns: var(--sidebar) 1fr; }
+
+  /* Collapsed: icons only. The labels stay in the DOM -- they are what a screen
+     reader announces and what the hit area is still sized around; only the
+     sighted width goes away. */
+  .app.tight { grid-template-columns: var(--sidebar-tight) 1fr; }
+  .app.tight .navlabel { display: none; }
+  .app.tight .brand { justify-content: center; padding: 0; }
+  .app.tight nav button,
+  .app.tight .sidebar-foot button { justify-content: center; padding-left: 0; padding-right: 0; }
+}
+
+.sidebar {
+  border-bottom: 1px solid var(--line);
+  padding: 14px 12px;
+}
+@media (min-width: 900px) {
+  .sidebar {
+    border-bottom: none;
+    border-right: 1px solid var(--line);
+    padding: 18px 12px;
+    position: sticky;
+    top: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px 0 13px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.content { min-width: 0; padding: 16px 14px 72px; }
+@media (min-width: 900px) { .content { padding: 22px 24px 72px; } }
+
 
 /* ---------------------------------------------------------------- topbar */
 
+/* Kept for anything still rendering a topbar; the shell above supersedes it. */
 .topbar {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  border-bottom: 1px solid var(--line);
-  padding-bottom: 14px;
-  margin-bottom: 20px;
+  margin-bottom: 18px;
 }
 @media (min-width: 560px) {
   .topbar { flex-direction: row; align-items: center; gap: 24px; }
@@ -63,41 +143,92 @@ h3 { font-size: 14px; margin: 0; }
 }
 .dot-bad { background: var(--red); }
 
+/* Horizontal on a phone, a column on the sidebar. The active item is the one
+   place indigo appears without being pressable, because "where am I" and "what
+   can I press" are answered by position here, not by colour alone. */
 nav { display: flex; gap: 4px; flex-wrap: wrap; }
-nav button {
+@media (min-width: 900px) { nav { flex-direction: column; gap: 2px; } }
+
+nav button,
+.sidebar-foot button {
+  display: flex;
+  align-items: center;
+  gap: 9px;
   background: none;
   border: 1px solid transparent;
   color: var(--muted);
-  padding: 7px 14px;
-  border-radius: 8px;
+  padding: 8px 12px;
+  border-radius: var(--r-ctl);
   cursor: pointer;
   font: inherit;
+  text-align: left;
+  width: 100%;
 }
-nav button:hover { color: var(--text); background: var(--panel); }
-nav button.on { color: var(--text); background: var(--panel); border-color: var(--line); }
+nav button:hover,
+.sidebar-foot button:hover:not(:disabled) { color: var(--text); background: var(--inset); }
+nav button.on {
+  color: var(--text);
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+nav svg, .sidebar-foot svg { flex: 0 0 auto; }
+
+/* Sits under the nav on a phone, pinned to the floor of the rail on a desktop.
+   Collapse is hidden below the breakpoint because there is no rail to collapse
+   down there -- the sidebar is a strip across the top. */
+.sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  margin-top: 10px;
+}
+.sidebar-foot .collapse { display: none; }
+.sidebar-foot button:disabled { opacity: 0.55; cursor: default; }
+@media (min-width: 900px) {
+  .sidebar-foot { margin-top: auto; }
+  .sidebar-foot .collapse { display: flex; }
+}
 
 /* ---------------------------------------------------------------- panels */
 
 .panel {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-card);
   margin-bottom: 14px;
   overflow: hidden;
 }
+/* The head is a tinted bar rather than a bordered strip of card, so a panel
+   reads as titled content instead of as two stacked cards. */
 .panel-head {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding: 14px 16px;
+  padding: 13px 16px;
+  background: var(--inset);
   border-bottom: 1px solid var(--line);
 }
+.panel-head h2, .panel-head h3 { font-size: 14px; font-weight: 650; letter-spacing: -0.01em; }
 @media (min-width: 620px) {
   .panel-head { flex-direction: row; align-items: flex-start; justify-content: space-between; }
 }
 .panel-head p { margin: 3px 0 0; }
+.panel-head + .scroll-x thead, .panel-head + table thead { background: var(--panel); }
 .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .inset { padding: 14px 16px; background: var(--inset); }
+
+/* Targeting renders .card without a rule of its own, so it was drawing as bare
+   text on the page background while everything around it sat on a surface. It
+   is a panel without a head. */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
 
 .crumb {
   display: flex;
@@ -114,19 +245,38 @@ button {
   border: 1px solid var(--line);
   color: var(--text);
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   cursor: pointer;
   font: inherit;
   white-space: nowrap;
 }
-button:hover:not(:disabled) { border-color: #38414f; }
+button:hover:not(:disabled) { border-color: #2b3549; background: var(--panel); }
 button:disabled { opacity: 0.45; cursor: not-allowed; }
-button.primary { background: #1d3a6b; border-color: #2b5498; color: #dce9ff; }
-button.primary:hover:not(:disabled) { background: #244a89; }
+button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+button.primary:hover:not(:disabled) { background: var(--accent-hi); border-color: var(--accent-hi); }
+/* A button that starts real work on a live account, as opposed to one that
+   navigates. Green is the running colour everywhere else in this palette, so
+   the button that causes running wears it too. */
+button.go {
+  background: var(--green);
+  border-color: var(--green);
+  color: #05130d;
+  font-weight: 650;
+}
+button.go:hover:not(:disabled) { filter: brightness(1.08); }
+/* Destructive, and quiet until you are over it -- a red row of delete buttons
+   reads as an error state rather than as a column of controls. */
+button.danger { color: var(--red); }
+button.danger:hover:not(:disabled) { background: var(--red-dim); border-color: var(--red); }
 button.link {
   background: none;
   border: none;
-  color: var(--accent);
+  color: var(--blue);
   padding: 4px 6px;
 }
 button.more { display: block; margin: 14px auto 0; }
@@ -140,18 +290,18 @@ a.button {
   border: 1px solid var(--line);
   color: var(--text);
   padding: 8px 14px;
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   font: inherit;
   line-height: 1.55;
   text-decoration: none;
   white-space: nowrap;
 }
-a.button:hover { border-color: #38414f; }
+a.button:hover { border-color: #2b3549; background: var(--panel); }
 
 input, select, textarea {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   color: var(--text);
   padding: 8px 12px;
   font: inherit;
@@ -205,6 +355,7 @@ input.mini { width: 68px; padding: 5px 8px; text-align: right; }
 .scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
 
 table { width: 100%; border-collapse: collapse; }
+thead { background: var(--inset); }
 th {
   text-align: left;
   font-size: 11px;
@@ -216,7 +367,7 @@ th {
   border-bottom: 1px solid var(--line);
   white-space: nowrap;
 }
-td { padding: 10px 14px; border-bottom: 1px solid #1e222c; vertical-align: middle; }
+td { padding: 11px 14px; border-bottom: 1px solid var(--line-soft); vertical-align: middle; }
 tr:last-child td { border-bottom: none; }
 tbody tr:hover { background: var(--inset); }
 tr.off { opacity: 0.5; }
@@ -287,7 +438,7 @@ td.rowdetail::before { content: none; }
 .tile {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
+  border-radius: var(--r-card);
   padding: 12px 14px;
 }
 .tile-label {
@@ -298,7 +449,8 @@ td.rowdetail::before { content: none; }
   letter-spacing: 0.05em;
 }
 .tile-value {
-  font-size: 21px;
+  font-size: 23px;
+  font-weight: 650;
   letter-spacing: -0.02em;
   font-variant-numeric: tabular-nums;
   margin-top: 3px;
@@ -312,7 +464,7 @@ td.rowdetail::before { content: none; }
   padding: 2px;
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
 }
 .seg button {
   flex: 1;
@@ -324,13 +476,13 @@ td.rowdetail::before { content: none; }
   font-size: 12.5px;
 }
 .seg button:hover:not(.on) { color: var(--text); }
-.seg button.on { background: var(--panel); color: var(--text); }
+.seg button.on { background: var(--accent-dim); color: var(--text); }
 
 /* The viewBox is a fixed 100 wide and stretched to whatever room there is, so
    the bars keep their proportions to each other at any width. Nothing in it is
    stroked or lettered, which is the only reason the non-uniform scale is safe. */
 .chart { display: block; width: 100%; height: 96px; }
-.chart-slot { fill: #23272f; }
+.chart-slot { fill: var(--inset); }
 .chart-bar { fill: var(--accent); }
 .chart-axis {
   display: flex;
@@ -345,9 +497,9 @@ td.rowdetail::before { content: none; }
 .split {
   display: flex;
   height: 8px;
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   overflow: hidden;
-  background: #23272f;
+  background: var(--inset);
 }
 .split-a { background: var(--accent); }
 .split-b { background: var(--violet); }
@@ -373,9 +525,9 @@ td.rowdetail::before { content: none; }
 .small { font-size: 12.5px; }
 .error { color: var(--red); }
 .error.banner {
-  background: #2a1618;
-  border: 1px solid #4a2327;
-  border-radius: 8px;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  border-radius: var(--r-ctl);
   padding: 10px 14px;
 }
 .ok { color: var(--green); }
@@ -401,14 +553,14 @@ td.rowdetail::before { content: none; }
   font-weight: 600;
   white-space: nowrap;
 }
-.pill-queued { background: #1d2b45; color: #7fb0ff; }
-.pill-handed_out { background: #2a2340; color: #c4a6ff; }
-.pill-followed { background: #16301d; color: #57d16c; }
-.pill-failed, .pill-rejected { background: #3a1d1f; color: #ff8085; }
-.pill-skipped, .pill-none { background: #23272f; color: var(--muted); }
-.pill-extracted { background: #16301d; color: #57d16c; }
-.pill-partial { background: #33280f; color: #e3b341; }
-.pill-received, .pill-extracting { background: #1d2b45; color: #7fb0ff; }
+.pill-queued { background: var(--blue-dim); color: var(--blue); }
+.pill-handed_out { background: var(--violet-dim); color: var(--violet); }
+.pill-followed { background: var(--green-dim); color: var(--green); }
+.pill-failed, .pill-rejected { background: var(--red-dim); color: var(--red); }
+.pill-skipped, .pill-none { background: var(--inset); color: var(--muted); }
+.pill-extracted { background: var(--green-dim); color: var(--green); }
+.pill-partial { background: var(--amber-dim); color: var(--amber); }
+.pill-received, .pill-extracting { background: var(--blue-dim); color: var(--blue); }
 
 .src { font-size: 11.5px; color: var(--muted); }
 .src-manual { color: var(--violet); }
@@ -418,7 +570,7 @@ td.rowdetail::before { content: none; }
   flex: 1;
   min-width: 70px;
   height: 6px;
-  background: #23272f;
+  background: var(--inset);
   border-radius: 99px;
   overflow: hidden;
   /* For .cap-lead, which has to sit ON the used fill rather than after it: two
@@ -484,7 +636,7 @@ td.rowdetail::before { content: none; }
 .login input {
   background: var(--bg);
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--r-ctl);
   color: var(--text);
   padding: 0.6rem 0.7rem;
   font: inherit;
@@ -493,10 +645,11 @@ td.rowdetail::before { content: none; }
 
 .login button {
   margin-top: 0.35rem;
-  background: #1d3a6b;
-  border: 1px solid #2b5498;
-  color: #dce9ff;
-  border-radius: 8px;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #fff;
+  font-weight: 600;
+  border-radius: var(--r-ctl);
   padding: 0.6rem 1rem;
   font: inherit;
   cursor: pointer;
@@ -505,11 +658,11 @@ td.rowdetail::before { content: none; }
 .login button:disabled { opacity: 0.55; cursor: default; }
 
 .login-err {
-  background: #2a1618;
-  border: 1px solid #4a2327;
-  border-radius: 8px;
+  background: var(--red-dim);
+  border: 1px solid var(--red);
+  border-radius: var(--r-ctl);
   padding: 0.55rem 0.7rem;
-  color: #ff9a9e;
+  color: var(--red);
   font-size: 0.85rem;
 }
 
@@ -562,7 +715,7 @@ td.rowdetail::before { content: none; }
   gap: 0.4rem;
   padding: 0.35rem 0.7rem;
   border: 1px solid var(--line);
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   background: var(--inset);
   color: var(--muted);
   font-size: 0.85rem;
@@ -571,9 +724,9 @@ td.rowdetail::before { content: none; }
 }
 .chip:hover { border-color: var(--accent); }
 .chip.on {
-  background: #1d3a6b;
-  border-color: #2b5498;
-  color: #dce9ff;
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--text);
 }
 /* The native control is the accessible one; hiding it would break keyboard and
    screen-reader use, so it stays and is merely small.
@@ -603,5 +756,5 @@ td.rowdetail::before { content: none; }
   font-size: 0.78rem;
   font-variant-numeric: tabular-nums;
 }
-.chip.on .n { color: #a9c4ee; }
+.chip.on .n { color: var(--violet); }
 .chip .n.gone { color: var(--amber); font-variant-numeric: normal; }
