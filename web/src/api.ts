@@ -53,6 +53,9 @@ export type Personality = {
   client: string;
   model: string;
   people: number;
+  /** Dropped by the filter. Personality-wide: a refusal leaves a person with
+      no assignment, so it belongs to no account. */
+  rejected: number;
   accounts: Account[];
 };
 

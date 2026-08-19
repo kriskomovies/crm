@@ -140,6 +140,12 @@ export class PersonalitiesService {
         client: p.client.name,
         model: p.client.extractionModel,
         people: p._count.people,
+        // The personality's own number, and it only ever was one. A refusal
+        // leaves a Person with no Assignment, so it belongs to no account --
+        // accountView still carries it for the registration reply the agent
+        // adopts, and printing it in a per-account column made two accounts
+        // show the same 236 and read as a bug. Same arithmetic, said once.
+        rejected: Math.max(0, p._count.people - totals.assigned),
         accounts: p.accounts.map((a, i) =>
           accountView(
             a,

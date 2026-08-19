@@ -106,6 +106,15 @@ function PersonalityCard({
           <h2>{p.name}</h2>
           <p className="muted small">
             {p.client} · {p.model} · <strong>{p.people}</strong> handles attached
+            {p.rejected > 0 && (
+              <>
+                {' · '}
+                <strong>{p.rejected}</strong>{' '}
+                <span title="Dropped by the filter and never offered to any account. A personality-wide number: a refusal leaves a person with no assignment, so there is no account to attribute it to.">
+                  rejected by the filter
+                </span>
+              </>
+            )}
           </p>
         </div>
         <div className="panel-actions">
@@ -162,9 +171,6 @@ function PersonalityCard({
                   <th className="num">followed</th>
                   <th className="num" title="Attempts this account made today that missed. Not lost: the row goes back in the queue and is offered again tomorrow, or immediately after a cap reset. It is not retried the same day, because the attempt still counts against the cap.">
                     failed today
-                  </th>
-                  <th className="num" title="Handles the filter dropped. A dropped handle is never offered to any account, so this belongs to the personality and prints the same against every row.">
-                    rejected
                   </th>
                   <th className="num" title="Handles a sibling account of this personality already followed. One person can be assigned once, so this account can never be handed them.">
                     already followed
@@ -265,16 +271,6 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
           title="attempts today that came back failed — the row went back in the queue and is offered again tomorrow, or immediately after a cap reset"
         >
           {a.failedToday || ''}
-        </td>
-        {/* Same value on every row of this card, by construction -- a refusal
-            leaves a person with no assignment, so it belongs to no account. The
-            note under the table says so; the title is for whoever hovers first. */}
-        <td
-          data-label="rejected"
-          className="num"
-          title="dropped by the filter — a personality-wide number, the same on every account row"
-        >
-          {a.rejected || ''}
         </td>
         <td
           data-label="already followed"
