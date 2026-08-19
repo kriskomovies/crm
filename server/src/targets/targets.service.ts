@@ -13,7 +13,7 @@
  * single statement using FOR UPDATE SKIP LOCKED -- the standard work-queue
  * pattern, and the only version of this that is correct under load.
  */
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { startOfToday, utcLiteral } from '../common/day';
 import { PrismaService } from '../prisma/prisma.service';
@@ -56,8 +56,30 @@ export interface ClaimResult {
   sessionWindowMinutes: number;
 }
 
+/**
+ * How long a row may sit `handed_out` with no result before the next claim puts
+ * it back in the queue.
+ *
+ * The agent answers for every row it claims -- worked rows one at a time,
+ * unreached rows when the walk ends, leftovers released explicitly on Stop.
+ * None of that survives the process being killed, and on 2026-08-19 it was
+ * killed sixteen times: a batch of 74 claimed at 13:20 was still being worked at
+ * 13:31 and the next line in that log is the agent starting up again at 14:10.
+ * The rows it had not reached stayed handed_out for the rest of the day --
+ * 78 of them across one personality -- holding cap slots, never re-offered, and
+ * sitting on the emulator's roster with an untapped Add button. A dead process
+ * cannot report anything, so the server is the only party left to notice.
+ *
+ * An hour, against a longest-ever observed walk of 1060.8 seconds. Three and a
+ * half times the worst case is the margin that keeps this from ever requeueing a
+ * row a live machine is still working.
+ */
+const HANDOUT_TTL_MINUTES = 60;
+
 @Injectable()
 export class TargetsService {
+  private readonly log = new Logger(TargetsService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   /**
@@ -158,6 +180,46 @@ export class TargetsService {
         // longer back-off, which is the right one for an account an operator
         // has switched off.
         return { targets: [], remainingInWindow: 0, sessionWindowMinutes: windowMinutes };
+      }
+
+      // Before either count, because both of them read handedOutAt and a row
+      // nobody ever answered for must not go on spending a slot.
+      //
+      // RESET, NOT DELETE. The obvious version drops these rows and lets the
+      // person come back through the pipeline as if never seen -- and it very
+      // nearly works, since filter() is handed every person on a sheet rather
+      // than only new ones and allocate() skips exactly those who already have
+      // an assignment. What kills it is the gap: for the one cycle between the
+      // delete and the next sheet, that person has no assignment, and
+      // refusedHandles() is defined as "no assignment, or assigned to another
+      // account". The agent would be handed them as refusals and tap the X, and
+      // Snapchat never suggests a hidden account again. Resetting in place has
+      // no such window -- the row keeps its account, is never a refusal to
+      // anybody, and is claimable again immediately below.
+      //
+      // handedOutAt goes to NULL and that is the point: it returns the cap slot,
+      // which is what lets an account reach its cap in FOLLOWS rather than in
+      // handouts that bought nothing. Deliberately unlike the `failed` path in
+      // report(), which requeues but KEEPS the timestamp so a machine that
+      // answers "failed" in a loop cannot pull the same handle all day. That is
+      // a machine that answered. This is one that never did.
+      //
+      // NOW() AT TIME ZONE 'UTC' for the same reason as the window count below:
+      // handedOutAt is timestamp WITHOUT time zone holding UTC, and a bare NOW()
+      // would be rendered in the session TimeZone.
+      const released = await tx.$executeRaw`
+        UPDATE assignments
+           SET state = 'queued', "handedOutAt" = NULL
+         WHERE "accountId" = ${accountId}
+           AND state = 'handed_out'
+           AND "handedOutAt" < (NOW() AT TIME ZONE 'UTC')
+                               - make_interval(mins => ${HANDOUT_TTL_MINUTES}::int)
+      `;
+      if (released > 0) {
+        this.log.warn(
+          `claim: requeued ${released} row(s) handed to ${accountId} over ` +
+            `${HANDOUT_TTL_MINUTES} minutes ago with no result reported`,
+        );
       }
 
       const [used] = await tx.$queryRaw<{ n: number }[]>`
