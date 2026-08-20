@@ -157,6 +157,13 @@ describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
       'remainingToday',
       'sessionWindowMinutes',
       'targets',
+      // How the machine is meant to reach these people: `search` for an account
+      // with no Quick Add roster, `roster` for the ordinary walk. Part of the
+      // shape since the onboarding seed landed, and pinned here for the same
+      // reason as everything else in this list -- an agent that stops finding it
+      // silently falls back to the walk and takes a new account off a roster it
+      // does not have.
+      'via',
     ]);
     // Explicitly NOT the envelope. Pinned so that a sweep to "make every
     // endpoint consistent" fails here instead of quietly dropping

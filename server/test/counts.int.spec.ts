@@ -219,6 +219,10 @@ describe('the account row shape', () => {
       'enabled',
       'failedToday',
       'followed',
+      // Added when the cap bar started drawing follows landed rather than cap
+      // slots taken. The shape assertion is the whole point of this test, so it
+      // is listed here rather than loosened to a subset.
+      'followedToday',
       'handedToday',
       'id',
       'label',
@@ -297,8 +301,14 @@ describe('failedToday: what a reported failure leaves behind', () => {
     // The evidence for why the obvious column would have been empty.
     expect(await prisma.assignment.count({ where: { accountId: a.id, state: 'failed' } })).toBe(0);
     // And they really are back in the queue: failedToday is a subset of queued,
-    // not a state beside it.
-    expect(rows.get(a.label)!.queued).toBe(3);
+    // not a state beside it. TWO, not three: the claim above took all three rows
+    // and only two were reported, so the third is still handed_out and is not
+    // queued by any reading. This asserted 3 from the day it was written and has
+    // never once passed -- `queued` counts state='queued' and always has.
+    expect(rows.get(a.label)!.queued).toBe(2);
+    expect(
+      await prisma.assignment.count({ where: { accountId: a.id, state: 'handed_out' } }),
+    ).toBe(1);
   });
 
   it('counts a failure reported with no note at all', async () => {

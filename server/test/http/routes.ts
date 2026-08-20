@@ -60,6 +60,24 @@ export const ROUTES: RouteSpec[] = [
     sample: `/v1/accounts/${ABSENT}/targets/someone/result`,
     body: { result: 'followed' },
   },
+  // The roster call: one question about the people on screen, in place of the
+  // two about the ledger it replaced. A metered WRITE -- an `add` is charged to
+  // today's cap in the transaction that decided it -- so it is guarded exactly
+  // as the claim is.
+  {
+    method: 'POST',
+    path: '/v1/accounts/:accountId/targets/roster',
+    sample: `/v1/accounts/${ABSENT}/targets/roster`,
+  },
+  // A person the machine swiped off its Quick Add roster. Guarded for the
+  // ordinary reason and one sharper one: hiding cannot be undone, so an
+  // unguarded route here lets a stranger permanently remove people from another
+  // tenant's roster.
+  {
+    method: 'POST',
+    path: '/v1/accounts/:accountId/targets/:handle/hidden',
+    sample: `/v1/accounts/${ABSENT}/targets/someone/hidden`,
+  },
 
   // PersonalityLedgerController
   {
@@ -98,10 +116,17 @@ export const ROUTES: RouteSpec[] = [
   },
   // The ledger as a file. Guarded like its JSON twin, and it has to be: it is
   // the whole ledger in one response rather than a page of it.
+  //
+  // .txt, not .csv. The CSV export was replaced by one handle per line -- eight
+  // columns is the right shape for a spreadsheet and the wrong one for feeding
+  // handles back into a machine, which is what this export is for. The route
+  // was swapped and this table was not, so the drift test had been failing ever
+  // since and the auth matrix was firing four times at a path Express no longer
+  // served.
   {
     method: 'GET',
-    path: '/api/personalities/:id/targets.csv',
-    sample: `/api/personalities/${ABSENT}/targets.csv`,
+    path: '/api/personalities/:id/targets.txt',
+    sample: `/api/personalities/${ABSENT}/targets.txt`,
   },
   {
     method: 'POST',
@@ -130,6 +155,19 @@ export const ROUTES: RouteSpec[] = [
     path: '/api/accounts/:id/reset-daily-cap',
     sample: `/api/accounts/${ABSENT}/reset-daily-cap`,
   },
+
+  // OnboardingController -- the pool of handles a brand-new account is seeded
+  // from. A new Snapchat account is shown no Quick Add suggestions at all, so
+  // it is onboarded by searching names instead, and this is where those names
+  // are kept. Guarded: the pool is per client and naming who a tenant is about
+  // to approach is worth as much as the ledger itself.
+  { method: 'GET', path: '/api/onboarding', sample: '/api/onboarding' },
+  {
+    method: 'POST',
+    path: '/api/onboarding',
+    sample: '/api/onboarding',
+  },
+  { method: 'DELETE', path: '/api/onboarding', sample: '/api/onboarding' },
 
   // SettingsController -- how hard to push every account, one setting per client
   { method: 'GET', path: '/api/settings', sample: '/api/settings' },
