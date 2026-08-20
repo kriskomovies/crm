@@ -37,8 +37,24 @@ export function CapBar({ used, cap, landed }: { used: number; cap: number; lande
   const behind = landed === undefined ? null : num(landed);
   // A cap of 0 hands out nothing, so any use at all is already over budget --
   // and dividing by it would put NaN into the width and collapse the bar.
-  const full = u > 0 && u >= c;
-  const pct = c > 0 ? Math.min(100, (u / c) * 100) : full ? 100 : 0;
+  // RED MEANS "NO BUDGET LEFT", AND THAT IS A FACT ABOUT HANDOUTS.
+  //
+  // The cap meters slots TAKEN, not follows landed: remainingToday is
+  // dailyCap - handedOutToday. Colouring on `used` therefore said the opposite
+  // of the truth in both directions. haelpjle landed 261 follows against a cap
+  // of 240 and went red as though it were over budget -- it was not, it took
+  // exactly 240 slots and some of yesterday's handouts landed today, because
+  // followedToday counts by resultAt and handedToday by handedOutAt. Meanwhile
+  // haileodx had spent all 240 slots with nothing left to hand out and sat
+  // green, because only 234 of them had landed.
+  //
+  // So the fill still measures follows -- that is the number an operator is
+  // counting, and the whole reason the bar stopped measuring handouts -- and
+  // the COLOUR measures the budget. A day where more lands than was handed out
+  // is a good day, not an error, and it no longer looks like one.
+  const spent = behind !== null ? behind >= c : u >= c;
+  const full = c > 0 ? spent : u > 0;
+  const pct = c > 0 ? Math.min(100, (u / c) * 100) : u > 0 ? 100 : 0;
   const behindPct = behind !== null && c > 0 ? Math.min(100, (behind / c) * 100) : 0;
   return (
     <div className="cap">
@@ -55,7 +71,16 @@ export function CapBar({ used, cap, landed }: { used: number; cap: number; lande
           style={{ width: `${pct}%`, background: full ? 'var(--red)' : 'var(--green)' }}
         />
       </div>
-      <span className="cap-label">
+      <span
+        className="cap-label"
+        title={
+          behind === null
+            ? `${u} followed today`
+            : `${u} followed today; ${behind} of ${c} cap slots taken. ` +
+              `The cap meters slots taken, so follows landing today can exceed ` +
+              `it when a row handed out yesterday lands now.`
+        }
+      >
         {u}/{c}
         {behind !== null && behind > u && (
           <em className="cap-done" title="cap slots taken by rows nobody was added by">
