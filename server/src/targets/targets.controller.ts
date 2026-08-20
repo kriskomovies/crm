@@ -40,6 +40,7 @@ import { FollowResult, TargetsService } from './targets.service';
 
 /** The handles a machine can see on its own Quick Add, right now. */
 class RosterDto {
+  @IsOptional()
   @IsArray()
   // A roster is about a hundred. The bound is on the request rather than only in
   // the service so an absurd body is refused before it reaches a transaction
@@ -47,7 +48,26 @@ class RosterDto {
   @ArrayMaxSize(400)
   @IsString({ each: true })
   @MaxLength(200, { each: true })
-  handles!: string[];
+  handles?: string[];
+
+  /**
+   * The sheet just extracted, instead of the handles off it.
+   *
+   * The agent uploads a screenshot and this server reads every handle on it --
+   * with a vision model, against the full-size image, which is a better read
+   * than the agent can get from 9px text through Tesseract. Making the agent
+   * OCR the same rows again, only worse, to name people this server already
+   * named is work for nothing and a second place for the two to disagree.
+   *
+   * So: send the job id and the handles are taken from that sheet's own reply.
+   * `handles` still works and still wins when both are sent -- the screen is not
+   * always the sheet, and a caller that means a specific list must be able to
+   * say so.
+   */
+  @IsOptional()
+  @IsString()
+  @MaxLength(64)
+  jobId?: string;
 }
 
 class ReportDto {
@@ -199,7 +219,11 @@ export class TargetsController {
     @Req() req: any,
   ) {
     await this.assertOwned(accountId, req.client.id);
-    const answer = await this.rosters.decide(accountId, dto.handles ?? []);
+    // The handles win when both are sent: the screen is not always the sheet.
+    const handles = dto.handles?.length
+      ? dto.handles
+      : await this.rosters.handlesOnSheet(accountId, dto.jobId);
+    const answer = await this.rosters.decide(accountId, handles);
     return {
       ...answer,
       // Delivered where it is about to be used, like the claim's copy: every

@@ -19,14 +19,15 @@
  *   add     they passed the filter and nobody has them. Charged to today's cap
  *           here and now, exactly as a claim charges it, because that is what an
  *           add is.
- *   reject  the filter dropped them, or a sibling account already followed them.
- *           Either way this account can never have them, so it may swipe them
- *           off its roster.
- *   leave   everything else, and there are only three of those: this account
- *           already followed them, the ledger has never heard of them (they were
- *           on the roster before any sheet carried them), or today's cap is
- *           spent. None of the three is an instruction, and inventing one would
- *           mean hiding somebody we are about to be told to add.
+ *   reject  this account can never add them, or already has: the filter dropped
+ *           them, a sibling holds them, THIS account already followed them, or
+ *           the row was reported unfollowable. All four are terminal, so the row
+ *           is swiped off rather than left to be re-read every cycle for the
+ *           life of the account.
+ *   leave   only two, and neither is terminal: the ledger has never heard of
+ *           them (they were on the roster before any sheet carried them), or
+ *           today's cap is spent. Both are rows to come back to, and hiding
+ *           either would destroy a target this account still wants.
  *
  * The cap is the only reason `leave` exists for a person who would otherwise be
  * `add`. A young account stops accepting adds at roughly forty a day, so the
@@ -37,6 +38,8 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { startOfToday, utcLiteral } from '../common/day';
+import { entriesFrom, extractJson } from '../extraction/sheet-task';
+import { normHandle } from '../extraction/normalize';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type Verdict = 'add' | 'reject' | 'leave';
@@ -63,6 +66,48 @@ export class RosterService {
   private readonly log = new Logger(RosterService.name);
 
   constructor(private readonly prisma: PrismaService) {}
+
+
+  /**
+   * Every handle the model read off one sheet.
+   *
+   * The agent uploaded that screenshot and this server already read it, at full
+   * size, with a vision model. Asking the agent to OCR the same rows again --
+   * 9px text through Tesseract, on the machine where that has been the weakest
+   * link all along -- to name people already named here is duplicated work and
+   * a second place for the two to disagree about who was on screen.
+   *
+   * Read back out of the stored reply rather than from a column, because the
+   * reply IS the record of what was on that sheet and nothing else has to be
+   * kept in step with it. `people` cannot answer this: firstSeenSheetId marks
+   * only those the sheet introduced, so a roster full of faces the ledger
+   * already knew would come back nearly empty.
+   */
+  async handlesOnSheet(accountId: string, jobId?: string): Promise<string[]> {
+    if (!jobId) return [];
+    const sheet = await this.prisma.sheet.findFirst({
+      where: { id: jobId, accountId },
+      select: { extraction: { select: { rawReply: true } } },
+    });
+    if (!sheet) throw new NotFoundException('job not found for this account');
+    const raw = sheet.extraction?.rawReply;
+    if (raw == null) return [];
+    // rawReply is whatever the gateway returned: the reply text, or the parsed
+    // object when the provider handed one back. extractJson takes the string
+    // case, entriesFrom the object case, and both end at the same list.
+    const entries =
+      typeof raw === 'string' ? extractJson(raw).entries : entriesFrom(raw);
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const e of entries) {
+      const h = normHandle(e.handle);
+      if (h && !seen.has(h)) {
+        seen.add(h);
+        out.push(h);
+      }
+    }
+    return out;
+  }
 
   async decide(accountId: string, handles: string[]): Promise<RosterAnswer> {
     const asked = [
@@ -154,12 +199,29 @@ export class RosterService {
           });
           continue;
         }
+        // HIDDEN, not left. Both of these are terminal for this account, and a
+        // row left alone is not neutral: Quick Add goes on offering it, every
+        // cycle pays to read it again, and it holds a slot on screen that a
+        // workable person could have had. An operator looking at the roster
+        // sees Add and X both untapped and cannot tell it from a row the
+        // machine failed on.
+        //
+        // Hiding is irreversible -- Snapchat never suggests a hidden account
+        // again -- which is exactly why it is safe HERE and nowhere else in
+        // this method. Already followed: the relationship exists, so there is
+        // nothing left to be suggested for. Skipped: the row can never be
+        // added, so being offered it again buys nothing.
+        //
+        // The two `leave` answers below stay `leave` for the opposite reason.
+        // A spent budget is a row to come back to tomorrow, and an unextracted
+        // person is one the filter has not judged yet -- hiding either would
+        // destroy a target this account still wants.
         if (a.state === 'followed') {
-          verdicts.push({ handle, do: 'leave', why: 'this account already followed them' });
+          verdicts.push({ handle, do: 'reject', why: 'this account already followed them' });
           continue;
         }
         if (a.state === 'skipped') {
-          verdicts.push({ handle, do: 'leave', why: 'reported unfollowable' });
+          verdicts.push({ handle, do: 'reject', why: 'reported unfollowable' });
           continue;
         }
         // queued, handed_out or a failure that requeued: all of them mean this
