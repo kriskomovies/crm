@@ -456,6 +456,7 @@ export class TargetsService {
     handle: string,
     result: FollowResult,
     note?: string,
+    verified?: boolean,
   ): Promise<void> {
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
@@ -479,16 +480,40 @@ export class TargetsService {
       throw new ForbiddenException('that target belongs to another account');
     }
 
+    // A FAILURE THE AGENT SAW GIVES ITS SLOT BACK. ONE IT MERELY COULD NOT READ
+    // DOES NOT.
+    //
+    // The cap is meant to buy a day's ADDS, and a slot spent on an add that
+    // provably did not happen buys nothing -- orawvx charged 130 slots for 84
+    // follows, and the missing budget was attempts that came back failed.
+    // Keeping those charged makes the cap meter attempts, which is not what it
+    // is for.
+    //
+    // But `failed` covers two different events. The pill back grey is evidence
+    // the add did not land. A button that could not be read at all is evidence
+    // of nothing, and the add may well be on the phone: refunding THAT buys a
+    // second real add with one slot, which is how 31bb132 measured
+    // stephaniecvto taking 363 slots and landing 280 follows against a cap of
+    // 240. So the refund needs the agent to say it watched the thing fail, and
+    // silence is read as "unknown" -- the safe half, and what every client that
+    // has not been updated already sends.
+    const undone = result === 'failed' && verified === true;
     await this.prisma.assignment.update({
       where: { id: assignment.id },
       data: {
-        // A failure goes back to queued, but keeps handedOutAt so it still
-        // counts against today's cap -- the follow attempt was really made.
         state: result === 'failed' ? 'queued' : result,
         resultAt: new Date(),
         note: note?.slice(0, 500),
+        // Clearing it is the refund: handedOutToday counts rows with a
+        // handedOutAt in today, and remainingToday is the cap minus that.
+        ...(undone ? { handedOutAt: null } : {}),
       },
     });
+    if (undone) {
+      this.log.log(
+        `cap slot returned: ${handle} was watched failing on ${accountId}`,
+      );
+    }
 
     // An account is seeded until it has fifty people it found by SEARCHING,
     // which is what a `manual` row is on an account with no roster -- nothing

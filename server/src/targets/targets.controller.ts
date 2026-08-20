@@ -24,6 +24,7 @@ import {
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsIn,
   IsOptional,
   IsString,
@@ -73,6 +74,22 @@ class RosterDto {
 class ReportDto {
   @IsIn(['followed', 'failed', 'skipped'])
   result!: FollowResult;
+
+  /**
+   * Did the agent SEE this fail, or does it merely not know?
+   *
+   * `failed` covers both today and they are not the same event. The pill
+   * provably back grey is evidence the add did not happen; a button that could
+   * not be read at all is evidence of nothing, and the add may well have landed
+   * on the phone. The agent has always known which it had -- it writes
+   * UNVERIFIED_NOTE for the second -- and has had no field to say it in.
+   *
+   * It decides whether the cap slot comes back. Absent, the slot is kept, which
+   * is the safe reading and what every existing client gets.
+   */
+  @IsOptional()
+  @IsBoolean()
+  verified?: boolean;
 
   @IsOptional()
   @IsString()
@@ -241,7 +258,7 @@ export class TargetsController {
     @Req() req: any,
   ) {
     await this.assertOwned(accountId, req.client.id);
-    await this.targets.report(accountId, handle, dto.result, dto.note);
+    await this.targets.report(accountId, handle, dto.result, dto.note, dto.verified);
     return { ok: true };
   }
 
