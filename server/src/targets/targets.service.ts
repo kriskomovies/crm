@@ -94,6 +94,46 @@ export class TargetsService {
     });
   }
 
+  /**
+   * Follows this account landed today whose cap slot was charged on an EARLIER
+   * day -- the batch claimed before midnight and worked after it.
+   *
+   * Those adds reached Snapchat today and were free of today's budget, because
+   * the slot is taken at handout and the follow happens later. On 2026-08-20
+   * stephaniecvto made 134 of them against 92 handouts: 43 paid for the day
+   * before. `handedOutAt: null` catches the rows left behind by the stale-handout
+   * sweep back when it refunded stamps; nothing writes NULL onto a followed row
+   * any more.
+   */
+  async straddledToday(accountId: string): Promise<number> {
+    const since = startOfToday();
+    return this.prisma.assignment.count({
+      where: {
+        accountId,
+        state: 'followed',
+        resultAt: { gte: since },
+        OR: [{ handedOutAt: null }, { handedOutAt: { lt: since } }],
+      },
+    });
+  }
+
+  /**
+   * The day's budget actually spent: slots charged today, plus follows that
+   * landed today on a slot charged before it.
+   *
+   * One definition, used by remainingToday() here and matched statement for
+   * statement inside claim(). They cannot be allowed to drift: an agent told it
+   * has budget pays for a capture, a montage and a VISION CALL before the claim
+   * gets to disagree with the number that sent it.
+   */
+  async spentToday(accountId: string): Promise<number> {
+    const [handed, straddled] = await Promise.all([
+      this.handedOutToday(accountId),
+      this.straddledToday(accountId),
+    ]);
+    return handed + straddled;
+  }
+
   async remainingToday(accountId: string): Promise<number> {
     const account = await this.prisma.account.findUnique({
       where: { id: accountId },
@@ -105,7 +145,7 @@ export class TargetsService {
     if (!account) throw new NotFoundException('account not found');
     if (!account.enabled) return 0;
     const cap = account.personality.client.dailyCapPerAccount;
-    return Math.max(0, cap - (await this.handedOutToday(accountId)));
+    return Math.max(0, cap - (await this.spentToday(accountId)));
   }
 
   /** Seconds an agent waits between follows. Served, never acted on here. */
@@ -197,19 +237,35 @@ export class TargetsService {
       // no such window -- the row keeps its account, is never a refusal to
       // anybody, and is claimable again immediately below.
       //
-      // handedOutAt goes to NULL and that is the point: it returns the cap slot,
-      // which is what lets an account reach its cap in FOLLOWS rather than in
-      // handouts that bought nothing. Deliberately unlike the `failed` path in
-      // report(), which requeues but KEEPS the timestamp so a machine that
-      // answers "failed" in a loop cannot pull the same handle all day. That is
-      // a machine that answered. This is one that never did.
+      // THE STAMP STAYS. It used to go to NULL, on the reasoning that a handout
+      // nobody answered for bought nothing and should not spend a slot -- so the
+      // account could reach its cap in follows rather than in handouts. The
+      // reasoning has a hole in it: "nobody answered" is not the same as
+      // "nothing happened". An agent that taps Add and then dies, is stopped by
+      // an operator, or gets wedged behind a modal has made the add on the phone
+      // and will never report it. Refunding that slot buys a second real add
+      // with the same budget, and the whole point of the cap is the number of
+      // adds the PHONE makes.
+      //
+      // What it cost, measured 2026-08-19 against a 240/day cap: stephaniecvto
+      // was charged 363 slots and landed 280 follows, haileodx 289 and 277,
+      // haelpjle 262 and 260. Every one of those follows carried a stamp dated
+      // that same day, so nothing was orphaned and no reset was pressed -- the
+      // budget was simply handed back and spent again, all day.
+      //
+      // So this now agrees with the `failed` path in report(), which has always
+      // requeued while KEEPING the timestamp. The row is still workable, and the
+      // person is still reachable; what does not come back is the slot. A day's
+      // budget only ever goes down, which is the direction this has to fail in:
+      // an interrupted batch loses its remaining slots until midnight, and that
+      // is cheaper than a rate limit nobody can see coming.
       //
       // NOW() AT TIME ZONE 'UTC' for the same reason as the window count below:
       // handedOutAt is timestamp WITHOUT time zone holding UTC, and a bare NOW()
       // would be rendered in the session TimeZone.
       const released = await tx.$executeRaw`
         UPDATE assignments
-           SET state = 'queued', "handedOutAt" = NULL
+           SET state = 'queued'
          WHERE "accountId" = ${accountId}
            AND state = 'handed_out'
            AND "handedOutAt" < (NOW() AT TIME ZONE 'UTC')
@@ -218,7 +274,8 @@ export class TargetsService {
       if (released > 0) {
         this.log.warn(
           `claim: requeued ${released} row(s) handed to ${accountId} over ` +
-            `${HANDOUT_TTL_MINUTES} minutes ago with no result reported`,
+            `${HANDOUT_TTL_MINUTES} minutes ago with no result reported ` +
+            `(their cap slots stay spent -- the adds may well have happened)`,
         );
       }
 
@@ -228,6 +285,29 @@ export class TargetsService {
         WHERE "accountId" = ${accountId}
           AND "handedOutAt" >= ${since}::timestamp
       `;
+
+      // The slot is charged when a row is HANDED OUT and the follow happens
+      // later, so a batch claimed before midnight and worked after it lands on
+      // today while its budget was taken from yesterday. Those follows were free,
+      // and on 2026-08-20 stephaniecvto made 134 of them against 92 handouts --
+      // 43 of them paid for the day before.
+      //
+      // Counted rather than folded into the query above because the two must not
+      // overlap: this asks ONLY for rows whose slot was charged on an earlier day
+      // (or refunded before this change stopped that), so adding the two is exact
+      // where a max() of the pair would quietly under-count.
+      //
+      // resultAt, not handedOutAt, because that is when the add reached Snapchat
+      // -- which is the only clock a rate limit is keeping.
+      const [straddled] = await tx.$queryRaw<{ n: number }[]>`
+        SELECT count(*)::int AS n
+        FROM assignments
+        WHERE "accountId" = ${accountId}
+          AND state = 'followed'
+          AND "resultAt" >= ${since}::timestamp
+          AND ("handedOutAt" IS NULL OR "handedOutAt" < ${since}::timestamp)
+      `;
+      const spentToday = used.n + straddled.n;
 
       // The same count with a different lower bound, issued inside the same
       // transaction so it sees the same snapshot and is covered by the same
@@ -258,7 +338,7 @@ export class TargetsService {
       const roomInWindow = account.sessionCap - usedInWindow.n;
       const take = Math.max(
         0,
-        Math.min(limit, account.dailyCap - used.n, roomInWindow),
+        Math.min(limit, account.dailyCap - spentToday, roomInWindow),
       );
       if (take === 0) {
         return {
@@ -317,7 +397,16 @@ export class TargetsService {
         ORDER BY a."createdAt" DESC, a.id DESC
         LIMIT ${take}
         FOR UPDATE SKIP LOCKED
-      )
+      ),
+      -- Wrapped so the ORDER BY above can survive into the result. RETURNING has
+      -- no order in Postgres -- it yields rows in whatever sequence the executor
+      -- updated them -- so newest-first was only ever the plan's habit here, and
+      -- the plan changes when the statements around it do. Adding one unrelated
+      -- count to this transaction was enough to flip the batch into ascending
+      -- order, which the suite caught and which nothing downstream would have:
+      -- the agent walks its batch against a roster drawn newest-first, so a
+      -- reversed batch is not an error anywhere, just a walk that misses more.
+      handed AS (
       UPDATE assignments a
       -- NOT NOW(). handedOutAt is timestamp WITHOUT time zone and every
       -- Prisma write puts UTC in it, but NOW() is timestamptz and the implicit
@@ -331,7 +420,13 @@ export class TargetsService {
       RETURNING p.handle AS handle,
                 p."displayName" AS "displayName",
                 p.nationality AS nationality,
-                a.reason AS reason
+                a.reason AS reason,
+                a."createdAt" AS "createdAt",
+                a.id AS id
+      )
+      SELECT handle, "displayName", nationality, reason
+      FROM handed
+      ORDER BY "createdAt" DESC, id DESC
       `;
 
       // Every row above was just stamped with a handedOutAt inside the window,

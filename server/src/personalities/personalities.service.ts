@@ -88,7 +88,8 @@ export class PersonalitiesService {
    */
   async list(clientId: string) {
     const ofClient = { account: { personality: { clientId } } };
-    const [rows, states, handedToday, failedToday, followedToday] = await Promise.all([
+    const [rows, states, handedToday, failedToday, followedToday, straddledToday] =
+      await Promise.all([
       this.prisma.personality.findMany({
         where: { clientId },
         include: {
@@ -120,12 +121,18 @@ export class PersonalitiesService {
         where: { ...ofClient, ...followedTodayWhere() },
         _count: { _all: true },
       }),
+      this.prisma.assignment.groupBy({
+        by: ['accountId'],
+        where: { ...ofClient, ...straddledTodayWhere() },
+        _count: { _all: true },
+      }),
     ]);
 
     const byAccount = groupCounts(states);
     const today = new Map(handedToday.map((h) => [h.accountId, h._count._all]));
     const missed = new Map(failedToday.map((f) => [f.accountId, f._count._all]));
     const landed = new Map(followedToday.map((f) => [f.accountId, f._count._all]));
+    const carried = new Map(straddledToday.map((f) => [f.accountId, f._count._all]));
 
     return rows.map((p) => {
       // The groupBy above spans the whole client, so the per-personality slice
@@ -156,6 +163,7 @@ export class PersonalitiesService {
             landed.get(a.id) ?? 0,
             totals,
             p._count.people,
+            carried.get(a.id) ?? 0,
           ),
         ),
       };
@@ -271,7 +279,8 @@ export class PersonalitiesService {
     personalityId: string,
     dailyCap: number,
   ): Promise<AccountView> {
-    const [people, states, handedToday, failedToday, followedToday] = await Promise.all([
+    const [people, states, handedToday, failedToday, followedToday, straddledToday] =
+      await Promise.all([
       this.prisma.person.count({ where: { personalityId } }),
       this.prisma.assignment.groupBy({
         by: ['accountId', 'state'],
@@ -292,6 +301,9 @@ export class PersonalitiesService {
       this.prisma.assignment.count({
         where: { accountId: a.id, ...followedTodayWhere() },
       }),
+      this.prisma.assignment.count({
+        where: { accountId: a.id, ...straddledTodayWhere() },
+      }),
     ]);
     const byAccount = groupCounts(states);
     const totals = personalityTotals([...byAccount.values()]);
@@ -304,6 +316,7 @@ export class PersonalitiesService {
       followedToday,
       totals,
       people,
+      straddledToday,
     );
   }
 
@@ -383,6 +396,12 @@ export class PersonalitiesService {
     if (!account) throw new NotFoundException('account not found');
 
     const since = startOfToday();
+    // Read before the transaction clears the stamps, because clearing them is
+    // what turns these rows into "straddled" ones -- counting after would be
+    // counting the same fact through a column this is about to rewrite.
+    const followedToday = await this.prisma.assignment.count({
+      where: { accountId, ...followedTodayWhere() },
+    });
     const freed = await this.prisma.$transaction(async (tx) => {
       // The same row lock claim() takes, on the same account row. claim()
       // serialises on FOR UPDATE OF a and counts handedOutAt underneath it; a
@@ -417,7 +436,19 @@ export class PersonalitiesService {
       // Exact rather than re-counted: nothing on this account is left holding a
       // stamp inside today, and the lock was held while that became true.
       handedToday: 0,
-      remainingToday: account.personality.client.dailyCapPerAccount,
+      // NOT the full cap any more, and that is what makes this button safe to
+      // press. Clearing the stamps frees the SLOTS; it cannot unmake the adds
+      // Snapchat has already seen, and this method's own warning above says so --
+      // "an account that really did 200 adds today and is reset will be handed a
+      // fresh dailyCap and will spend it against a cooldown that will not lift".
+      // It was handed one because this number was a literal.
+      //
+      // A followed row whose stamp this just cleared is exactly the shape
+      // straddledTodayWhere() matches, so those adds go on counting while the
+      // slots they no longer hold come back. Re-running a test still resets
+      // cleanly, because a test has not followed anybody; an account that spent
+      // its day does not get a second one.
+      remainingToday: Math.max(0, account.personality.client.dailyCapPerAccount - followedToday),
     };
   }
 
@@ -969,6 +1000,7 @@ function accountView(
   followedToday: number,
   totals: PersonalityTotals,
   people: number,
+  straddledToday = 0,
 ): AccountView {
   const followed = counts.followed ?? 0;
   return {
@@ -981,7 +1013,14 @@ function accountView(
     // a different column from the `handed out` state count that this change
     // removed. Only the state count went.
     handedToday,
-    remainingToday: Math.max(0, dailyCap - handedToday),
+    // The SAME arithmetic TargetsService.claim enforces -- used + straddled --
+    // because an account told it has budget spends a capture, a montage and a
+    // vision call before the claim gets to disagree. `handedToday` alone is what
+    // it used to be, and it read high by exactly the follows whose slot was
+    // charged yesterday. Defaulted to 0 so a caller that has not counted them
+    // (resetDailyCap, which has just cleared today outright) still reads
+    // correctly rather than being forced to pass a zero it does not mean.
+    remainingToday: Math.max(0, dailyCap - handedToday - straddledToday),
     queued: counts.queued ?? 0,
     followed,
     // Every Person either has exactly one Assignment (UNIQUE personId) or none,
@@ -1044,5 +1083,33 @@ function failedTodayWhere() {
  */
 function followedTodayWhere() {
   return { state: AssignmentState.followed, resultAt: { gte: startOfToday() } };
+}
+
+/**
+ * Follows this account landed today whose cap slot was charged on an EARLIER day.
+ *
+ * The slot is taken when a row is handed out and the add happens later, so a
+ * batch claimed before midnight and worked after it lands on today having spent
+ * yesterday's budget. Those follows are free unless somebody counts them, and on
+ * 2026-08-20 stephaniecvto made 134 of them against 92 handouts -- 43 paid for
+ * the day before.
+ *
+ * It exists so `remainingToday` can be the SAME arithmetic the claim enforces
+ * (TargetsService.claim: used + straddled). When these two disagree the agent
+ * reads budget it will not be given, and pays for a capture, a montage and a
+ * vision call to find that out -- which is the one thing has_budget_today() was
+ * written to avoid.
+ *
+ * `handedOutAt: null` is in the OR for the rows that predate the claim fix that
+ * stopped the stale-handout sweep refunding stamps. Nothing writes NULL onto a
+ * followed row any more; these are the ones already in the table.
+ */
+function straddledTodayWhere() {
+  const since = startOfToday();
+  return {
+    state: AssignmentState.followed,
+    resultAt: { gte: since },
+    OR: [{ handedOutAt: null }, { handedOutAt: { lt: since } }],
+  };
 }
 
