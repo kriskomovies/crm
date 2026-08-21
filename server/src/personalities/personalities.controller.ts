@@ -284,4 +284,18 @@ export class AccountsController {
   resetDailyCap(@Param('id') id: string, @Req() req: any) {
     return this.personalities.resetDailyCap(req.client.id, id);
   }
+
+  /**
+   * Delete the account and everything hanging off it.
+   *
+   * 200 with a report rather than 204, unlike the personality delete beside it.
+   * This cascades through assignments, hides and sheets, and an operator who has
+   * just done something irreversible is owed the size of it -- how many follows
+   * and sheets went with it -- rather than an empty body.
+   */
+  @Delete(':id')
+  @HttpCode(200)
+  removeAccount(@Param('id') id: string, @Req() req: any) {
+    return this.personalities.removeAccount(req.client.id, id);
+  }
 }

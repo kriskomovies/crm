@@ -205,6 +205,11 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
   const [resetting, setResetting] = useState(false);
   const [resetErr, setResetErr] = useState<string | null>(null);
   const [freed, setFreed] = useState<CapReset | null>(null);
+  // Deleting is kept on its own confirmation rather than sharing the cap
+  // reset's. They read alike in a table and one of them cannot be undone.
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteErr, setDeleteErr] = useState<string | null>(null);
 
   // Pause and resume is all that is left here. The cap moved to Settings: it is
   // one number for the whole client, and twenty rows each offering to edit it
@@ -219,6 +224,19 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const remove = async () => {
+    setDeleting(true);
+    setDeleteErr(null);
+    try {
+      await api.deleteAccount(a.id);
+      // No success state to show: the row it would have rendered in is gone.
+      onChanged();
+    } catch (e) {
+      setDeleteErr(e instanceof Error ? e.message : String(e));
+      setDeleting(false);
     }
   };
 
@@ -322,15 +340,29 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
           >
             {asking ? 'keep it' : 'reset cap'}
           </button>
+          <button
+            className="link danger"
+            disabled={deleting}
+            onClick={() => {
+              setAsking(false);
+              setDeleteErr(null);
+              setConfirmDelete((v) => !v);
+            }}
+          >
+            {confirmDelete ? 'keep it' : 'remove'}
+          </button>
         </td>
       </tr>
 
       {/* A second row rather than something crammed into the actions cell: what
           this button does needs a sentence before it fires, and a sentence does
           not fit in a column that is mostly numbers. */}
-      {(asking || freed || resetErr) && (
+      {(asking || freed || resetErr || confirmDelete || deleteErr) && (
         <tr>
-          <td className="rowdetail" data-label="" colSpan={8}>
+          {/* Nine columns: account, status, cap, queued, followed, failed today,
+              already followed, dropped, actions. It said 8, so the detail row
+              stopped one column short of the table it belongs to. */}
+          <td className="rowdetail" data-label="" colSpan={9}>
             {asking && (
               <>
                 <p className="rowdetail-p">
@@ -358,6 +390,33 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
                 </div>
               </>
             )}
+
+            {confirmDelete && (
+              <>
+                <p className="rowdetail-p">
+                  Delete <code>{a.label}</code>? This <strong>cannot be undone</strong>. Its{' '}
+                  {a.followed} follow{a.followed === 1 ? '' : 's'}, its {a.queued} queued row
+                  {a.queued === 1 ? '' : 's'} and every sheet it uploaded go with it, and the
+                  uploaded images are purged from storage.
+                </p>
+                <p className="rowdetail-p muted">
+                  The people themselves stay — they belong to the personality, not to this
+                  account. Losing their assignments is what frees them to be handed to a
+                  sibling account, which is usually the reason to do this. Nothing changes on
+                  Snapchat: anyone this account already added stays added.
+                </p>
+                <div className="rowdetail-actions">
+                  <button className="danger" disabled={deleting} onClick={() => void remove()}>
+                    {deleting ? 'Deleting…' : `Delete ${a.label}`}
+                  </button>
+                  <button disabled={deleting} onClick={() => setConfirmDelete(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </>
+            )}
+
+            {deleteErr && <p className="rowdetail-p error">{deleteErr}</p>}
 
             {resetErr && <p className="rowdetail-p error">{resetErr}</p>}
 

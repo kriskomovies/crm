@@ -38,6 +38,16 @@ export type Account = {
  *  `cleared` is how many of today's cap slots came back, `requeued` is how many
  *  of those rows were stuck mid-flight — claimed by a machine and never
  *  reported — and are workable again. */
+/** What deleting an account cost, reported back so the screen can say it. */
+export type AccountRemoved = {
+  id: string;
+  label: string;
+  followed: number;
+  queued: number;
+  sheets: number;
+  purged: number;
+};
+
 export type CapReset = {
   id: string;
   label: string;
@@ -521,6 +531,20 @@ export const api = {
    */
   resetDailyCap: (id: string) =>
     req<CapReset>(`/api/accounts/${id}/reset-daily-cap`, { method: 'POST' }),
+
+  /**
+   * Delete an account and everything hanging off it.
+   *
+   * Irreversible, and wider than it looks: assignments, hides and sheets all
+   * cascade. The PEOPLE survive -- they belong to the personality -- and losing
+   * their assignments is what frees them to be handed to a sibling account,
+   * which is usually the point.
+   *
+   * Answers with what it destroyed rather than 204, so the screen can say how
+   * much it was after the fact.
+   */
+  deleteAccount: (id: string) =>
+    req<AccountRemoved>(`/api/accounts/${id}`, { method: 'DELETE' }),
 
   settings: () => req<SettingsRead>('/api/settings'),
 

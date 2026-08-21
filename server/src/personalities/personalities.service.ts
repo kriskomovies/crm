@@ -559,6 +559,66 @@ export class PersonalitiesService {
   }
 
   /** Delete a personality and everything hanging off it. */
+  /**
+   * Delete one account, and everything the database hangs off it.
+   *
+   * Account -> Assignment, Hide and Sheet are all ON DELETE CASCADE, so this is
+   * not a tidy-up: it destroys that account's follow history, every row it was
+   * ever handed, and every sheet it uploaded. The people themselves survive --
+   * they belong to the PERSONALITY -- and their assignments going away is what
+   * frees them to be handed to a sibling, which is usually the reason an
+   * operator is deleting the account in the first place.
+   *
+   * Storage keys are collected and purged BEFORE the cascade, for the reason
+   * remove() gives above: the rows holding those keys are about to vanish, and
+   * an object with nothing left in the database that knows its name is not
+   * merely wasted space, it is unfindable waste.
+   *
+   * onboarding_handles survives on purpose. Its usedByAccountId is ON DELETE SET
+   * NULL rather than CASCADE, so deleting the account keeps the record that a
+   * handle was already spent -- otherwise the next account would be handed
+   * somebody this client has already added.
+   *
+   * -> what was destroyed, because a caller that has just done this irreversibly
+   * should be told what it cost rather than a bare 204.
+   */
+  async removeAccount(clientId: string, accountId: string) {
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, personality: { clientId } },
+      select: { id: true, label: true },
+    });
+    if (!account) throw new NotFoundException('account not found');
+
+    const [states, sheets] = await Promise.all([
+      this.prisma.assignment.groupBy({
+        by: ['state'],
+        where: { accountId },
+        _count: { _all: true },
+      }),
+      this.prisma.sheet.findMany({
+        where: { accountId, storageKey: { not: null } },
+        select: { storageKey: true },
+      }),
+    ]);
+    const counts = Object.fromEntries(states.map((s) => [s.state, s._count._all]));
+
+    const purged = await this.retention.purgeKeys(sheets.map((s) => s.storageKey));
+    await this.prisma.account.delete({ where: { id: accountId } });
+
+    this.log.log(
+      `deleted account ${account.label}: ${sheets.length} sheets ` +
+        `(${purged} objects purged), assignments ${JSON.stringify(counts)}`,
+    );
+    return {
+      id: account.id,
+      label: account.label,
+      followed: counts.followed ?? 0,
+      queued: counts.queued ?? 0,
+      sheets: sheets.length,
+      purged,
+    };
+  }
+
   async remove(clientId: string, personalityId: string): Promise<void> {
     await this.assertExists(clientId, personalityId);
 
