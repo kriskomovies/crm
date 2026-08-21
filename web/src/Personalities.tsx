@@ -176,9 +176,6 @@ function PersonalityCard({
                   <th className="num" title="Handles a sibling account of this personality already followed. One person can be assigned once, so this account can never be handed them.">
                     already followed
                   </th>
-                  <th className="num" title="Handles the filter dropped, so no account was ever given them. A personality-wide number: a drop leaves a person with no assignment, so it reads the same on every row of this card.">
-                    dropped
-                  </th>
                   <th></th>
                 </tr>
               </thead>
@@ -308,18 +305,6 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
         >
           {a.alreadyFollowed || ''}
         </td>
-        {/* Personality-wide, so it prints the same figure on every row of the
-            card -- muted for exactly that reason. It is here because the roster
-            has to add up: what the walk met was followed, already held, or
-            dropped, and dropped was the only one of the three with nowhere to
-            be read. */}
-        <td
-          data-label="dropped"
-          className="num muted"
-          title="dropped by the filter, so no account was ever given them — a personality-wide number"
-        >
-          {a.rejected || ''}
-        </td>
         <td data-label="" className="actions">
           {err && <span className="error small">{err}</span>}
           <button
@@ -359,10 +344,9 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
           not fit in a column that is mostly numbers. */}
       {(asking || freed || resetErr || confirmDelete || deleteErr) && (
         <tr>
-          {/* Nine columns: account, status, cap, queued, followed, failed today,
-              already followed, dropped, actions. It said 8, so the detail row
-              stopped one column short of the table it belongs to. */}
-          <td className="rowdetail" data-label="" colSpan={9}>
+          {/* Eight columns: account, status, cap, queued, followed, failed today,
+              already followed, actions. */}
+          <td className="rowdetail" data-label="" colSpan={8}>
             {asking && (
               <>
                 <p className="rowdetail-p">
