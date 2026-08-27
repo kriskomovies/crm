@@ -40,6 +40,16 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FollowResult, TargetsService } from './targets.service';
 
 /** The handles a machine can see on its own Quick Add, right now. */
+/**
+ * How many people to seed at once when an account has no roster of its own.
+ *
+ * The claim path sizes this from the batch the agent asked for; the roster path
+ * has no such number -- the agent asks about a whole sheet, not for N targets --
+ * so it needs one of its own. Twenty-five is the shipped claim_limit, which is
+ * what an agent has always been handed in one go.
+ */
+const SEED_BATCH = 25;
+
 class RosterDto {
   @IsOptional()
   @IsArray()
@@ -241,8 +251,53 @@ export class TargetsController {
       ? dto.handles
       : await this.rosters.handlesOnSheet(accountId, dto.jobId);
     const answer = await this.rosters.decide(accountId, handles);
+
+    // SEEDING, THE SAME AS THE CLAIM DOES IT.
+    //
+    // claim() falls back to the onboarding pool when it comes back empty from
+    // an account that has not finished being seeded, and answers `via: search`
+    // so the agent looks each handle up by name instead of hunting a roster.
+    // This endpoint replaced the claim in the cycle and did not carry that with
+    // it, which left a hole the claim never had: an account whose Quick Add is
+    // full of people a SIBLING already holds produces a sheet, so the cycle asks
+    // here rather than there -- and every row comes back reject, no add, and no
+    // seeding, forever. That is exactly the state unamnxz reached: one workable
+    // person in a ledger of five thousand.
+    //
+    // An empty claim was the old trigger; no ADD verdict is the same fact
+    // measured on the roster. Rejections do not count, because hiding people is
+    // not work this account can grow on.
+    const nothingToAdd = !answer.verdicts.some((v) => v.do === 'add');
+    let via = 'roster';
+    if (nothingToAdd && (await this.onboarding.isOnboarding(accountId))) {
+      const seeded = await this.onboarding.seed(accountId, SEED_BATCH);
+      if (seeded > 0) {
+        // A real claim, so both caps meter these adds like any other.
+        const claimed = await this.targets.claim(accountId, SEED_BATCH);
+        if (claimed.targets.length > 0) {
+          return {
+            verdicts: claimed.targets.map((t: { handle: string }) => ({
+              handle: t.handle,
+              do: 'add',
+              why: 'seeded by search -- this account has no roster of its own yet',
+            })),
+            // ClaimResult carries only the window; the daily figure is its own
+            // query, exactly as the claim endpoint above does it.
+            remainingToday: await this.targets.remainingToday(accountId),
+            remainingInWindow: claimed.remainingInWindow,
+            sessionWindowMinutes: claimed.sessionWindowMinutes,
+            via: 'search',
+            paceSeconds: await this.targets.paceSeconds(accountId),
+          };
+        }
+      }
+    }
+
     return {
       ...answer,
+      // `roster`, so the agent walks. The seeded reply above says `search`, and
+      // the agent has answered both since long before this endpoint existed.
+      via,
       // Delivered where it is about to be used, like the claim's copy: every
       // cycle asks this before it taps anything, so the machine cannot act on a
       // pace older than the roster in front of it.
