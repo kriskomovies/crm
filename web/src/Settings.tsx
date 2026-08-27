@@ -32,6 +32,10 @@ const LIMITS = {
   // never bind: it would read as a setting while being off. max 1440 is exactly
   // one day, the value that turns the session cap into a second daily cap.
   sessionWindowMinutes: { min: 1, max: 1440 },
+  // The same two ceilings again, for an account still being onboarded. Mirrored
+  // rather than shared so the pair reads as its own decision on the screen.
+  onboardingDailyCap: { min: 0, max: 2000 },
+  onboardingSessionCap: { min: 0, max: 2000 },
   followPaceSeconds: { min: 0, max: 3600 },
 };
 
@@ -54,6 +58,8 @@ export function Settings() {
   // Not `window`: this component has no other reason to touch the global, and a
   // shadow that only bites in a later edit is not worth the shorter name.
   const [windowMins, setWindowMins] = useState('');
+  const [onbCap, setOnbCap] = useState('');
+  const [onbSessionCap, setOnbSessionCap] = useState('');
   const [pace, setPace] = useState('');
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -73,6 +79,11 @@ export function Settings() {
         // it would believe it.
         setSessionCap(String(s.sessionCapPerAccount ?? ''));
         setWindowMins(String(s.sessionWindowMinutes ?? ''));
+        // `?? ''` for the same reason as the session pair above: a server that
+        // predates these columns sends undefined, and String(undefined) would
+        // put the literal "undefined" in the box.
+        setOnbCap(String(s.onboardingDailyCap ?? ''));
+        setOnbSessionCap(String(s.onboardingSessionCap ?? ''));
         setPace(String(s.followPaceSeconds));
       })
       .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
@@ -81,6 +92,8 @@ export function Settings() {
   const nextCap = parse(cap, 'dailyCapPerAccount');
   const nextSessionCap = parse(sessionCap, 'sessionCapPerAccount');
   const nextWindow = parse(windowMins, 'sessionWindowMinutes');
+  const nextOnbCap = parse(onbCap, 'onboardingDailyCap');
+  const nextOnbSessionCap = parse(onbSessionCap, 'onboardingSessionCap');
   const nextPace = parse(pace, 'followPaceSeconds');
   // The !== null on every clause is what makes a cleared box mean "leave this
   // one alone" rather than "save a zero", which on either cap would stop work.
@@ -89,6 +102,8 @@ export function Settings() {
     ((nextCap !== null && nextCap !== saved.dailyCapPerAccount) ||
       (nextSessionCap !== null && nextSessionCap !== saved.sessionCapPerAccount) ||
       (nextWindow !== null && nextWindow !== saved.sessionWindowMinutes) ||
+      (nextOnbCap !== null && nextOnbCap !== saved.onboardingDailyCap) ||
+      (nextOnbSessionCap !== null && nextOnbSessionCap !== saved.onboardingSessionCap) ||
       (nextPace !== null && nextPace !== saved.followPaceSeconds));
   const save = async () => {
     if (!dirty || busy) return;
@@ -100,12 +115,16 @@ export function Settings() {
         ...(nextCap === null ? {} : { dailyCapPerAccount: nextCap }),
         ...(nextSessionCap === null ? {} : { sessionCapPerAccount: nextSessionCap }),
         ...(nextWindow === null ? {} : { sessionWindowMinutes: nextWindow }),
+        ...(nextOnbCap === null ? {} : { onboardingDailyCap: nextOnbCap }),
+        ...(nextOnbSessionCap === null ? {} : { onboardingSessionCap: nextOnbSessionCap }),
         ...(nextPace === null ? {} : { followPaceSeconds: nextPace }),
       });
       const next = {
         dailyCapPerAccount: out.dailyCapPerAccount,
         sessionCapPerAccount: out.sessionCapPerAccount,
         sessionWindowMinutes: out.sessionWindowMinutes,
+        onboardingDailyCap: out.onboardingDailyCap,
+        onboardingSessionCap: out.onboardingSessionCap,
         followPaceSeconds: out.followPaceSeconds,
         extractionModel: out.extractionModel,
       };
@@ -113,6 +132,8 @@ export function Settings() {
       setCap(String(next.dailyCapPerAccount));
       setSessionCap(String(next.sessionCapPerAccount));
       setWindowMins(String(next.sessionWindowMinutes));
+      setOnbCap(String(next.onboardingDailyCap));
+      setOnbSessionCap(String(next.onboardingSessionCap));
       setPace(String(next.followPaceSeconds));
       setNote(
         'Saved. Both caps apply to the next handout; the pace applies the next time each machine claims.',
@@ -173,6 +194,47 @@ export function Settings() {
         <span className="muted small">
           the most any <strong>one</strong> account is handed inside the window below. Enforced
           here. This is what lets a machine work one account, then move to the next.
+        </span>
+      </div>
+
+      <div className="row-form inset">
+        <label className="cap-input">
+          onboarding cap
+          <input
+            type="number"
+            className="mini"
+            min={LIMITS.onboardingDailyCap.min}
+            max={LIMITS.onboardingDailyCap.max}
+            value={onbCap}
+            disabled={busy}
+            onChange={(e) => setOnbCap(e.target.value)}
+          />
+        </label>
+        <span className="muted small">
+          per day for an account that is still being <strong>onboarded</strong> — one that has not
+          yet made its first 50 adds. It <strong>replaces</strong> the follow cap above while it is,
+          because a new account reaches people by typing exact usernames into search, which is
+          different work at a different risk.
+        </span>
+      </div>
+
+      <div className="row-form inset">
+        <label className="cap-input">
+          onboarding session
+          <input
+            type="number"
+            className="mini"
+            min={LIMITS.onboardingSessionCap.min}
+            max={LIMITS.onboardingSessionCap.max}
+            value={onbSessionCap}
+            disabled={busy}
+            onChange={(e) => setOnbSessionCap(e.target.value)}
+          />
+        </label>
+        <span className="muted small">
+          the most a still-onboarding account is handed inside the same window below. This is the
+          number that decides how hard a brand-new account is pushed in its first hour — the hour
+          it is most likely to be limited in.
         </span>
       </div>
 

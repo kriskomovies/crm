@@ -509,6 +509,11 @@ describe('PUT /api/settings', () => {
       sessionCapPerAccount: 40,
       sessionWindowMinutes: 90,
       followPaceSeconds: 2,
+      // The onboarding pair, untouched by this PUT and read back as the fixture
+      // set them -- which is the point: saving one cap must not disturb the
+      // other pair.
+      onboardingDailyCap: 50,
+      onboardingSessionCap: 2000,
       // The fixture's pin, not the schema default -- that one is asserted in
       // defaults.int.spec.ts, where a bare client row can be built.
       extractionModel: 'gemini-3.6-flash',

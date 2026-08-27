@@ -43,6 +43,37 @@ import { PrismaService } from '../prisma/prisma.service';
  */
 export const ONBOARD_TARGET = 50;
 
+/**
+ * Which pair of caps meters this account, given how far into onboarding it is.
+ *
+ * ONE definition, because there are three places that turn a cap into a number
+ * -- the claim that enforces it, remainingToday(), and the account row the
+ * dashboard and the agent both read -- and they must not be able to disagree.
+ * An agent told it has budget by one of them and refused by another spends a
+ * capture, a montage and a vision call to discover the difference.
+ *
+ * REPLACES rather than stacks: while onboarding, the ordinary pair does not
+ * apply at all. Stacking would make the tighter of two unrelated numbers win,
+ * which is precisely the "one number answering two questions" this exists to
+ * undo.
+ */
+export function effectiveCaps(
+  onboardedCount: number,
+  caps: {
+    dailyCap: number;
+    sessionCap: number;
+    onboardingDailyCap: number;
+    onboardingSessionCap: number;
+  },
+): { onboarding: boolean; dailyCap: number; sessionCap: number } {
+  const onboarding = onboardedCount < ONBOARD_TARGET;
+  return {
+    onboarding,
+    dailyCap: onboarding ? caps.onboardingDailyCap : caps.dailyCap,
+    sessionCap: onboarding ? caps.onboardingSessionCap : caps.sessionCap,
+  };
+}
+
 @Injectable()
 export class OnboardingService {
   private readonly log = new Logger(OnboardingService.name);

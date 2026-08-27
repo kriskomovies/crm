@@ -16,6 +16,7 @@ import { randomUUID } from 'node:crypto';
 
 import { PrismaClient } from '@prisma/client';
 
+import { ONBOARD_TARGET } from '../src/onboarding/onboarding.service';
 import { hashApiKey } from '../src/auth/api-key.guard';
 import { GatewayClient } from '../src/extraction/gateway.client';
 import { PersonalitiesService } from '../src/personalities/personalities.service';
@@ -67,6 +68,13 @@ interface FixtureOptions {
   sessionCap?: number;
   /** How long that window is, in minutes. */
   sessionWindow?: number;
+  /** The two caps that REPLACE the pair above while an account is ONBOARDING. */
+  onboardingDailyCap?: number;
+  onboardingSessionCap?: number;
+  /** Create the accounts as still onboarding. Default FALSE -- see accountData:
+   *  a test that says `dailyCap: 7` means "an account capped at 7", and an
+   *  onboarding account is not metered by that number at all. */
+  onboarding?: boolean;
   /** Which VLM the pipeline is told to use. Pinned unless a test says. */
   model?: string;
 }
@@ -82,8 +90,16 @@ const created: string[] = [];
  */
 function accountData(name: string, opts: FixtureOptions) {
   const count = opts.accounts ?? 1;
+  // ESTABLISHED unless a test asks otherwise. A fresh row would default to
+  // onboardedCount 0, which is "still onboarding" -- and an onboarding account
+  // is metered by onboardingDailyCap/onboardingSessionCap, NOT by the dailyCap
+  // the test set. Every cap test here was written to mean "an account capped at
+  // N", so the fixture has to produce the kind of account that number applies
+  // to. Tests about onboarding pass `onboarding: true` and say so.
+  const onboardedCount = opts.onboarding ? 0 : ONBOARD_TARGET;
   return Array.from({ length: count }, (_, i) => ({
     label: `${name}_snap_${String(i + 1).padStart(2, '0')}`,
+    onboardedCount,
   }));
 }
 
@@ -109,6 +125,15 @@ export async function makeClient(opts: FixtureOptions = {}): Promise<TestClient>
       // failure would read as a broken claim. Tests about the session cap pass
       // sessionCap explicitly, exactly as cap tests pass dailyCap.
       sessionCapPerAccount: opts.sessionCap ?? 2000,
+      // Wide open by default and NOT mirroring the pair above, deliberately: a
+      // fixture account has onboardedCount 0, so it is "onboarding" and every
+      // pre-existing cap test would suddenly be metered by a number it never
+      // set. Left at 2000 these are inert unless a test asks for them.
+      // Mirror the ordinary caps by default: a test that says `onboarding: true`
+      // and `dailyCap: 7` still means "capped at 7", without having to restate
+      // the number twice.
+      onboardingDailyCap: opts.onboardingDailyCap ?? opts.dailyCap ?? 50,
+      onboardingSessionCap: opts.onboardingSessionCap ?? opts.sessionCap ?? 2000,
       sessionWindowMinutes: opts.sessionWindow ?? 60,
       // Pinned for the same reason the caps are: the e2e suite replays a
       // recorded reply and asserts the dollar figure it costs, and both are

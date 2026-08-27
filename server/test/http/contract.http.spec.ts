@@ -432,7 +432,7 @@ describe('the non-list endpoints', () => {
     });
   });
 
-  it('GET /api/settings answers the four pacing numbers, the model, and nothing else', async () => {
+  it('GET /api/settings answers the six pacing numbers, the model, and nothing else', async () => {
     const c = await ctx();
     const res = await api.get('/api/settings', { auth: c.auth });
     expect(res.status).toBe(200);
@@ -450,6 +450,12 @@ describe('the non-list endpoints', () => {
       'extractionModel',
       'followPaceSeconds',
       'models',
+      // The pair that REPLACES the two caps above while an account is still
+      // onboarding. Pinned here for the same reason as the rest: a field that
+      // reaches the DTO but misses the GET select saves and reads back
+      // unchanged, which on the screen looks exactly like a save that failed.
+      'onboardingDailyCap',
+      'onboardingSessionCap',
       'sessionCapPerAccount',
       'sessionWindowMinutes',
     ]);

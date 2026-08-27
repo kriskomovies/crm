@@ -146,6 +146,31 @@ model Client {
   /// cap would be measured if anyone turned it on.
   sessionWindowMinutes Int @default(60)
 
+  /// The two caps above, but for an account that is still ONBOARDING.
+  ///
+  /// An onboarding account is one that has not yet reached ONBOARD_TARGET
+  /// searched adds (see OnboardingService). It is not doing the same work as an
+  /// established one and must not be metered as if it were: it reaches people by
+  /// typing exact usernames into search, which is a stronger signal to Snapchat
+  /// than tapping a suggestion the app itself offered, and it is doing it on the
+  /// youngest, least trusted account on the box. It also has the opposite
+  /// pressure on it -- it cannot start earning until it is seeded -- so tying it
+  /// to the fleet's ordinary cap forces one number to answer two questions.
+  ///
+  /// Enforced in TargetsService.claim exactly as the ordinary pair is: when the
+  /// account is onboarding these REPLACE dailyCapPerAccount and
+  /// sessionCapPerAccount, they do not stack with them. sessionWindowMinutes is
+  /// shared, because the window is a property of the rotation rather than of the
+  /// account's age.
+  onboardingDailyCap Int @default(40)
+
+  /// The most an onboarding account is handed inside sessionWindowMinutes.
+  ///
+  /// 10 by default and deliberately small: it is the number that decides how
+  /// hard a brand-new account is pushed in its first hour, which is the hour it
+  /// is most likely to be limited in.
+  onboardingSessionCap Int @default(10)
+
   /// Seconds a machine waits between follows, before its own jitter.
   ///
   /// Served to agents rather than acted on here -- this server hands out

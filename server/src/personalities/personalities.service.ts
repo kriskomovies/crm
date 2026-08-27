@@ -22,6 +22,7 @@ import {
 import { AssignmentState, Prisma } from '@prisma/client';
 
 import { startOfToday } from '../common/day';
+import { effectiveCaps } from '../onboarding/onboarding.service';
 import { pageSize, slicePage } from '../common/pagination';
 import { cleanDisplayName, isPlausibleHandle, normHandle } from '../extraction/normalize';
 import { PipelineService } from '../pipeline/pipeline.service';
@@ -94,7 +95,14 @@ export class PersonalitiesService {
         where: { clientId },
         include: {
           client: {
-            select: { name: true, extractionModel: true, dailyCapPerAccount: true },
+            select: {
+              name: true,
+              extractionModel: true,
+              dailyCapPerAccount: true,
+              sessionCapPerAccount: true,
+              onboardingDailyCap: true,
+              onboardingSessionCap: true,
+            },
           },
           accounts: { orderBy: { label: 'asc' } },
           _count: { select: { people: true } },
@@ -156,7 +164,17 @@ export class PersonalitiesService {
         accounts: p.accounts.map((a, i) =>
           accountView(
             a,
-            p.client.dailyCapPerAccount,
+            // The cap this account is actually metered by, which is not the
+            // client's ordinary one while it is still onboarding. The agent
+            // reads remainingToday from this row to decide whether to run a
+            // cycle at all, so a number from the wrong pair costs it a capture,
+            // a montage and a vision call to be handed nothing.
+            effectiveCaps(a.onboardedCount, {
+              dailyCap: p.client.dailyCapPerAccount,
+              sessionCap: p.client.sessionCapPerAccount,
+              onboardingDailyCap: p.client.onboardingDailyCap,
+              onboardingSessionCap: p.client.onboardingSessionCap,
+            }).dailyCap,
             counts[i],
             today.get(a.id) ?? 0,
             missed.get(a.id) ?? 0,

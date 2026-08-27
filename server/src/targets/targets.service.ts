@@ -16,6 +16,7 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { startOfToday, utcLiteral } from '../common/day';
+import { effectiveCaps } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface TargetRow {
@@ -139,13 +140,34 @@ export class TargetsService {
       where: { id: accountId },
       select: {
         enabled: true,
-        personality: { select: { client: { select: { dailyCapPerAccount: true } } } },
+        onboardedCount: true,
+        personality: {
+          select: {
+            client: {
+              select: {
+                dailyCapPerAccount: true,
+                sessionCapPerAccount: true,
+                onboardingDailyCap: true,
+                onboardingSessionCap: true,
+              },
+            },
+          },
+        },
       },
     });
     if (!account) throw new NotFoundException('account not found');
     if (!account.enabled) return 0;
-    const cap = account.personality.client.dailyCapPerAccount;
-    return Math.max(0, cap - (await this.spentToday(accountId)));
+    // The SAME arithmetic claim() enforces, including which pair of caps applies
+    // -- an account told here that it has budget and then handed nothing by the
+    // claim has spent a capture, a montage and a vision call learning that.
+    const c = account.personality.client;
+    const { dailyCap } = effectiveCaps(account.onboardedCount, {
+      dailyCap: c.dailyCapPerAccount,
+      sessionCap: c.sessionCapPerAccount,
+      onboardingDailyCap: c.onboardingDailyCap,
+      onboardingSessionCap: c.onboardingSessionCap,
+    });
+    return Math.max(0, dailyCap - (await this.spentToday(accountId)));
   }
 
   /** Seconds an agent waits between follows. Served, never acted on here. */
@@ -197,12 +219,23 @@ export class TargetsService {
       // reason: clients is already in the join, so two more columns leave the
       // lock footprint byte-identical, where a second lookup of the client row
       // would not.
-      const [account] = await tx.$queryRaw<
-        { dailyCap: number; sessionCap: number; windowMinutes: number; enabled: boolean }[]
+      const [row] = await tx.$queryRaw<
+        {
+          dailyCap: number;
+          sessionCap: number;
+          onboardingDailyCap: number;
+          onboardingSessionCap: number;
+          onboardedCount: number;
+          windowMinutes: number;
+          enabled: boolean;
+        }[]
       >`
         SELECT c."dailyCapPerAccount" AS "dailyCap",
                c."sessionCapPerAccount" AS "sessionCap",
+               c."onboardingDailyCap" AS "onboardingDailyCap",
+               c."onboardingSessionCap" AS "onboardingSessionCap",
                c."sessionWindowMinutes" AS "windowMinutes",
+               a."onboardedCount" AS "onboardedCount",
                a.enabled
         FROM accounts a
         JOIN personalities p ON p.id = a."personalityId"
@@ -210,7 +243,23 @@ export class TargetsService {
         WHERE a.id = ${accountId}
         FOR UPDATE OF a
       `;
-      if (!account) throw new NotFoundException('account not found');
+      if (!row) throw new NotFoundException('account not found');
+
+      // An account still short of ONBOARD_TARGET searched adds is metered by the
+      // onboarding pair instead. REPLACING the ordinary caps, not stacking with
+      // them: it is doing different work -- typing exact usernames into search on
+      // the youngest account on the box -- and the operator sets what that work
+      // is worth separately. onboardedCount comes out of the SAME locked row as
+      // the caps, so the decision cannot drift from the counting underneath it.
+      //
+      // The window is shared on purpose. How long a rotation takes is a property
+      // of the fleet, not of one account's age, and a second window here would
+      // be a second thing to keep in step for no benefit.
+      const account = {
+        enabled: row.enabled,
+        windowMinutes: row.windowMinutes,
+        ...effectiveCaps(row.onboardedCount, row),
+      };
       const windowMinutes = account.windowMinutes;
       if (!account.enabled) {
         // Zero rather than the untouched session budget, to match

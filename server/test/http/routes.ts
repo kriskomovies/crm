@@ -150,6 +150,15 @@ export const ROUTES: RouteSpec[] = [
   // Gives one account today's cap back so the same test can be run twice in a
   // day. Guarded like everything else here -- it rewrites another tenant's
   // ledger if it is not.
+  // Removing an account from the screen it appears on. Guarded, and it has to
+  // be: unguarded it deletes another tenant's account and cascades its ledger.
+  // It shipped without being declared here, so the drift check was failing and
+  // the auth matrix was firing at it zero times.
+  {
+    method: 'DELETE',
+    path: '/api/accounts/:id',
+    sample: `/api/accounts/${ABSENT}`,
+  },
   {
     method: 'POST',
     path: '/api/accounts/:id/reset-daily-cap',

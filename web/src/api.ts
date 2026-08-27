@@ -472,6 +472,12 @@ export interface Settings {
   /** How long that window is. It rolls -- the server cannot observe a session,
    *  so it counts what an account was handed in the last N minutes. */
   sessionWindowMinutes: number;
+  /** The same two caps again, for an account still short of its first 50
+   *  searched adds. They REPLACE the pair above while it is onboarding rather
+   *  than stacking with it: searching exact usernames on a brand-new account is
+   *  different work at a different risk. The window is shared. */
+  onboardingDailyCap: number;
+  onboardingSessionCap: number;
   /** Which vision model reads this client's sheets. A closed set, checked
    *  server-side: the string is handed straight to the gateway, so an unlisted
    *  one does not fail validation, it fails every extraction for this client. */

@@ -7,6 +7,11 @@
  *   dailyCapPerAccount    how many targets the server hands EACH account per day
  *   sessionCapPerAccount  and how many in any rolling window
  *   sessionWindowMinutes  how long that window is
+ *   onboardingDailyCap    the first of those two again, for an account still
+ *   onboardingSessionCap  being onboarded -- they REPLACE the pair above while
+ *                         it is, because searching exact usernames on a
+ *                         brand-new account is different work at a different
+ *                         risk, and one number could not answer both
  *   followPaceSeconds     how long a machine waits between follows
  *
  * The first three are enforced here -- TargetsService.claim meters against both
@@ -81,6 +86,24 @@ class SettingsDto {
   @Max(1440)
   sessionWindowMinutes?: number;
 
+  /**
+   * The same two ceilings for an account that is still ONBOARDING -- one short
+   * of ONBOARD_TARGET searched adds. Same floors and ceilings as the pair above,
+   * for the same reasons: 0 pauses every new account at once without touching an
+   * established one, which is a brake worth having separately.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2000)
+  onboardingDailyCap?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(2000)
+  onboardingSessionCap?: number;
+
   @IsOptional()
   @IsInt()
   @Min(0)
@@ -109,6 +132,8 @@ const SETTINGS_SELECT = {
   dailyCapPerAccount: true,
   sessionCapPerAccount: true,
   sessionWindowMinutes: true,
+  onboardingDailyCap: true,
+  onboardingSessionCap: true,
   followPaceSeconds: true,
   extractionModel: true,
 } as const;
@@ -163,6 +188,12 @@ export class SettingsController {
         ...(dto.sessionWindowMinutes === undefined
           ? {}
           : { sessionWindowMinutes: dto.sessionWindowMinutes }),
+        ...(dto.onboardingDailyCap === undefined
+          ? {}
+          : { onboardingDailyCap: dto.onboardingDailyCap }),
+        ...(dto.onboardingSessionCap === undefined
+          ? {}
+          : { onboardingSessionCap: dto.onboardingSessionCap }),
         ...(dto.followPaceSeconds === undefined
           ? {}
           : { followPaceSeconds: dto.followPaceSeconds }),
