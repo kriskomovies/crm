@@ -178,6 +178,41 @@ export const ROUTES: RouteSpec[] = [
   },
   { method: 'DELETE', path: '/api/onboarding', sample: '/api/onboarding' },
 
+  // ProxiesController and StockAccountsController -- the proxies and the
+  // not-yet-assigned Snapchat logins this client owns. Both guarded, and both
+  // shipped undeclared: the drift check caught them, which is what it is for.
+  // The stock rows carry account credentials, so an unguarded read here would
+  // hand another tenant's logins to anyone who asked.
+  { method: 'GET', path: '/api/proxies', sample: '/api/proxies' },
+  { method: 'POST', path: '/api/proxies', sample: '/api/proxies' },
+  {
+    method: 'DELETE',
+    path: '/api/proxies/:id',
+    sample: `/api/proxies/${ABSENT}`,
+  },
+  { method: 'GET', path: '/api/stock-accounts', sample: '/api/stock-accounts' },
+  { method: 'POST', path: '/api/stock-accounts', sample: '/api/stock-accounts' },
+  {
+    method: 'POST',
+    path: '/api/stock-accounts/assign-unassigned',
+    sample: '/api/stock-accounts/assign-unassigned',
+  },
+  {
+    method: 'POST',
+    path: '/api/stock-accounts/:id/assign',
+    sample: `/api/stock-accounts/${ABSENT}/assign`,
+  },
+  {
+    method: 'PATCH',
+    path: '/api/stock-accounts/:id',
+    sample: `/api/stock-accounts/${ABSENT}`,
+  },
+  {
+    method: 'DELETE',
+    path: '/api/stock-accounts/:id',
+    sample: `/api/stock-accounts/${ABSENT}`,
+  },
+
   // SettingsController -- how hard to push every account, one setting per client
   { method: 'GET', path: '/api/settings', sample: '/api/settings' },
   {
