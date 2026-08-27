@@ -50,6 +50,31 @@ import { FollowResult, TargetsService } from './targets.service';
  */
 const SEED_BATCH = 25;
 
+/** The query-string spellings of "off" for `onboarding`. */
+const OFF = new Set(['0', 'false', 'no', 'off']);
+
+/**
+ * May this claim fall back to the onboarding pool? -> true unless told not to.
+ *
+ * A closed set of "off" spellings, and EVERYTHING ELSE IS ON, including a value
+ * nobody recognises. The asymmetry is deliberate and runs the safe way: seeding
+ * is what every machine did before the flag existed, so an unreadable value has
+ * to land on the old behaviour rather than silently disable the one path that
+ * gets a brand-new account moving at all.
+ *
+ * Not a ParseBoolPipe for the same reason. This rides on the one GET every
+ * agent in the fleet makes, and a pipe answers a malformed value with a 400 --
+ * turning a typo in one machine's config into an account that claims nothing
+ * whatsoever, which is a far worse failure than seeding when it need not have.
+ *
+ * Exported so it can be tested without a database: everything else on this path
+ * needs a booted app and a real Postgres, and the parsing is the part with the
+ * edge cases in it.
+ */
+export function mayOnboard(param: string | undefined): boolean {
+  return !OFF.has((param ?? '').trim().toLowerCase());
+}
+
 class RosterDto {
   @IsOptional()
   @IsArray()
@@ -79,6 +104,21 @@ class RosterDto {
   @IsString()
   @MaxLength(64)
   jobId?: string;
+
+  /**
+   * May this call fall back to the onboarding pool when the sheet has nothing
+   * to add? Absent means yes, which is what every machine did before the flag
+   * existed and what a client too old to send it still gets.
+   *
+   * The agent owns this decision, not the server. Whether an account needs
+   * seeding is a fact about the DEVICE -- a fresh install versus one that has
+   * been running a month -- and the agent is the side that can see it. From
+   * here a new account and an established one whose roster is merely empty
+   * today look identical.
+   */
+  @IsOptional()
+  @IsBoolean()
+  onboarding?: boolean;
 }
 
 class ReportDto {
@@ -157,10 +197,21 @@ export class TargetsController {
   async claim(
     @Param('accountId') accountId: string,
     @Query('limit', new DefaultValuePipe(25), ParseIntPipe) limit: number,
+    /**
+     * `onboarding=0` turns the seeding fallback below off for this call.
+     *
+     * A raw string rather than a ParseBoolPipe: this is a query parameter on
+     * the one GET that every agent in the fleet makes, and a pipe would answer
+     * a malformed value with a 400 -- turning a typo in one machine's config
+     * into an account that claims nothing at all. Anything that is not an
+     * explicit off is on, which is also what a client too old to send it gets.
+     */
+    @Query('onboarding') onboardingParam: string | undefined,
     @Req() req: any,
   ) {
     await this.assertOwned(accountId, req.client.id);
     const want = Math.min(limit, 100);
+    const seedingAllowed = mayOnboard(onboardingParam);
     let claimed = await this.targets.claim(accountId, want);
 
     // A NEW ACCOUNT ASKS AND IS HANDED NOTHING, FOREVER
@@ -175,8 +226,16 @@ export class TargetsController {
     // The re-claim is a real claim, so both caps meter these adds like any
     // other. They ARE ordinary adds; the only difference is that the machine
     // reaches them by searching a name instead of finding a row.
+    //
+    // `seedingAllowed` is the agent's own switch, and it is checked FIRST so a
+    // machine with seeding turned off costs nothing to ask -- not even the
+    // isOnboarding lookup.
     let onboarding = false;
-    if (claimed.targets.length === 0 && (await this.onboarding.isOnboarding(accountId))) {
+    if (
+      seedingAllowed &&
+      claimed.targets.length === 0 &&
+      (await this.onboarding.isOnboarding(accountId))
+    ) {
       const seeded = await this.onboarding.seed(accountId, want);
       if (seeded > 0) {
         claimed = await this.targets.claim(accountId, want);
@@ -267,9 +326,13 @@ export class TargetsController {
     // An empty claim was the old trigger; no ADD verdict is the same fact
     // measured on the roster. Rejections do not count, because hiding people is
     // not work this account can grow on.
+    // `onboarding: false` in the body is the agent's own switch, the same one
+    // the claim takes as a query parameter. Absent means yes, so a client too
+    // old to send it behaves exactly as it always has.
     const nothingToAdd = !answer.verdicts.some((v) => v.do === 'add');
     let via = 'roster';
-    if (nothingToAdd && (await this.onboarding.isOnboarding(accountId))) {
+    if (dto.onboarding !== false && nothingToAdd
+        && (await this.onboarding.isOnboarding(accountId))) {
       const seeded = await this.onboarding.seed(accountId, SEED_BATCH);
       if (seeded > 0) {
         // A real claim, so both caps meter these adds like any other.
