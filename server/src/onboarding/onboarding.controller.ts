@@ -24,6 +24,8 @@ import {
   Controller,
   Delete,
   Get,
+  NotFoundException,
+  Param,
   Post,
   Query,
   Req,
@@ -152,5 +154,34 @@ export class OnboardingController {
       dto?.which === 'all' ? { clientId } : { clientId, usedAt: { not: null } };
     const { count } = await this.prisma.onboardingHandle.deleteMany({ where });
     return { deleted: count };
+  }
+
+  /**
+   * Drop ONE handle from the pool.
+   *
+   * The two clears above are all-or-nothing, and neither answers the ordinary
+   * case: a single bad handle in a list of hundreds -- a name that no longer
+   * exists, one an operator pasted by mistake, one that keeps failing the
+   * search. Emptying the whole pool to remove it, and then re-importing the
+   * file, is the only thing that was possible.
+   *
+   * Scoped by clientId in the WHERE rather than fetched-then-checked: one
+   * statement, and another client's id simply matches nothing.
+   *
+   * Answers with the handle it removed and whether that handle had been SPENT,
+   * because the two are different acts. Removing an unused row takes a name out
+   * of the queue. Removing a used one deletes the record that stops it being
+   * handed to a second account of this client -- the same consequence "Clear
+   * used" carries, and the screen says so before it happens.
+   */
+  @Delete(':id')
+  async remove(@Param('id') id: string, @Req() req: any) {
+    const row = await this.prisma.onboardingHandle.findFirst({
+      where: { id, clientId: req.client.id },
+      select: { id: true, handle: true, usedAt: true },
+    });
+    if (!row) throw new NotFoundException('handle not found');
+    await this.prisma.onboardingHandle.delete({ where: { id: row.id } });
+    return { deleted: true, handle: row.handle, wasUsed: row.usedAt !== null };
   }
 }

@@ -177,6 +177,15 @@ export const ROUTES: RouteSpec[] = [
     sample: '/api/onboarding',
   },
   { method: 'DELETE', path: '/api/onboarding', sample: '/api/onboarding' },
+  // One handle, which the two clears above cannot express: a single bad name in
+  // a list of hundreds. Guarded like the rest -- and scoped by clientId in the
+  // WHERE, so another tenant's id matches nothing rather than 404ing after a
+  // read that confirmed the row exists.
+  {
+    method: 'DELETE',
+    path: '/api/onboarding/:id',
+    sample: '/api/onboarding/00000000-0000-0000-0000-000000000000',
+  },
 
   // ProxiesController and StockAccountsController -- the proxies and the
   // not-yet-assigned Snapchat logins this client owns. Both guarded, and both

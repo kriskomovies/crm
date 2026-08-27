@@ -696,6 +696,16 @@ export const api = {
       body: JSON.stringify({ which }),
     }),
 
+  /** Drop one handle from the pool. The two clears above are all-or-nothing and
+   *  neither covers the ordinary case: one bad name in a list of hundreds.
+   *  Answers with `wasUsed`, because removing a SPENT row also deletes the
+   *  record that stops that handle reaching a second account. */
+  deleteHandle: (id: string) =>
+    req<{ deleted: boolean; handle: string; wasUsed: boolean }>(
+      `/api/onboarding/${id}`,
+      { method: 'DELETE' },
+    ),
+
   attach: (id: string, handles: string[]) =>
     req<AttachResult>(`/api/personalities/${id}/targets`, {
       method: 'POST',
