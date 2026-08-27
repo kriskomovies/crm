@@ -184,8 +184,90 @@ model Client {
   filterRules   FilterRule[]
   apiKeys       ApiKey[]
   onboarding    OnboardingHandle[]
+  proxies       Proxy[]
+  stock         StockAccount[]
 
   @@map("clients")
+}
+
+/// A proxy the operators bought for the emulator fleet.
+///
+/// STOCK, NOT WORKFLOW: nothing the software ever reads. No /v1 endpoint
+/// serves this table, no claim or seed touches it, and no agent is told these
+/// exist. It is the operators' own inventory -- the answer to "which proxy
+/// does this emulator get" -- kept here instead of in a text file on someone's
+/// desktop, because the CRM is the one place every operator already looks.
+///
+/// The credentials are stored readable, unlike every key in this schema,
+/// because they exist to be typed into an emulator's proxy dialog by a human.
+/// A hash cannot be typed. The exposure of a database dump is accepted: these
+/// are bought-by-the-dozen proxies, not the client's book of business.
+model Proxy {
+  id       String @id @default(uuid())
+  clientId String
+  /// What the emulator's proxy dialog asks for first. http | https | socks4 |
+  /// socks5, closed at the API, so a typo fails the paste and not the device.
+  protocol String @default("http")
+  host     String
+  port     Int
+  /// Empty string, not null, when the proxy is unauthenticated. The unique
+  /// index below is what makes re-pasting a seller's list free, and Postgres
+  /// treats NULLs as distinct -- a nullable column there would let the same
+  /// credential-less proxy in twice.
+  username String @default("")
+  password String @default("")
+  createdAt DateTime @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  stock  StockAccount[]
+
+  /// Same endpoint, same user = same proxy. Two rows may share host:port with
+  /// different usernames -- sellers hand out one endpoint per credential.
+  @@unique([clientId, host, port, username])
+  @@map("proxies")
+}
+
+/// A Snapchat account the operators hold in stock, waiting to be installed on
+/// an emulator.
+///
+/// NOT the Account model below. That is an account the software works: it
+/// uploads sheets, is handed targets, is metered by the caps. A row here is a
+/// credential pair the operators own and nothing more -- the software never
+/// sees it, no /v1 endpoint serves it, and installing one on an emulator is a
+/// human act. When that emulator's account starts working it is created as an
+/// Account by the machine that drives it, and the two rows are never linked:
+/// this one is the receipt for the credential, that one is the worker.
+///
+/// The password is readable for the same reason Proxy's is: it exists to be
+/// typed into a login form on a device.
+model StockAccount {
+  id       String @id @default(uuid())
+  clientId String
+  username String
+  password String
+
+  /// Which proxy this account is to be configured behind, picked at import:
+  /// random among this client's proxies with the fewest stock accounts, so
+  /// the spread stays even without anyone doing arithmetic. SetNull on proxy
+  /// delete -- the account outlives its proxy and shows as unassigned rather
+  /// than vanishing with it.
+  proxyId String?
+
+  /// When the operator marked it installed on an emulator. A timestamp rather
+  /// than a flag so "when did this one go live" stays answerable, and null is
+  /// the honest state for an account still sitting in the drawer.
+  deployedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  client Client @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  proxy  Proxy? @relation(fields: [proxyId], references: [id], onDelete: SetNull)
+
+  /// Re-pasting a seller's file is how the list is topped up; it must not
+  /// double it.
+  @@unique([clientId, username])
+  /// "how loaded is each proxy" -- the read the even-spread picker makes.
+  @@index([proxyId])
+  @@map("stock_accounts")
 }
 
 /// One credential. Many per client, so a machine can hold its own.

@@ -412,6 +412,50 @@ export type ImportResult = {
   total: number;
 };
 
+/** A proxy as the emulator's dialog needs it typed: the address, and the
+ *  credential pair beside it. Sent whole wherever a stock account is read,
+ *  because the two are configured together. */
+export type ProxyRef = {
+  id: string;
+  protocol: string;
+  host: string;
+  port: number;
+  username: string;
+  password: string;
+};
+
+export type Proxy = ProxyRef & {
+  /** Stock accounts currently behind it — the number the even spread evens. */
+  accounts: number;
+  createdAt: string;
+};
+
+export type ProxyPool = { total: number; items: Proxy[] };
+
+/** One of OUR accounts, in stock. Not the software's Account above: nothing is
+ *  ever handed to it and no machine knows it exists. */
+export type StockAccount = {
+  id: string;
+  username: string;
+  password: string;
+  /** Set when the operator marked it installed on an emulator. */
+  deployedAt: string | null;
+  createdAt: string;
+  proxy: ProxyRef | null;
+};
+
+export type StockPool = {
+  total: number;
+  assigned: number;
+  deployed: number;
+  items: StockAccount[];
+};
+
+/** The account paste also deals proxies, so its result carries two more
+ *  counts: how many rows now sit behind one, and how many still do not
+ *  (which is only ever non-zero when there are no proxies to deal). */
+export type StockImportResult = ImportResult & { assigned: number; unassigned: number };
+
 export interface Session {
   authenticated: boolean;
   client?: { id: string; name: string };
@@ -586,6 +630,51 @@ export const api = {
     if (opts.conf?.length) p.set('conf', opts.conf.join(','));
     return `/api/personalities/${id}/targets.txt?${p}`;
   },
+
+  proxies: () => req<ProxyPool>('/api/proxies'),
+
+  importProxies: (text: string) =>
+    req<ImportResult>('/api/proxies', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  /** Answers with how many accounts it left unassigned, so the screen can say
+   *  so instead of the operator discovering it row by row. */
+  deleteProxy: (id: string) =>
+    req<{ deleted: boolean; unassigned: number }>(`/api/proxies/${id}`, {
+      method: 'DELETE',
+    }),
+
+  stock: () => req<StockPool>('/api/stock-accounts'),
+
+  /** Every row this adds is put behind a proxy in the same call — random among
+   *  the least loaded, so the spread stays even without anyone doing sums. */
+  importStock: (text: string) =>
+    req<StockImportResult>('/api/stock-accounts', {
+      method: 'POST',
+      body: JSON.stringify({ text }),
+    }),
+
+  /** Assign or re-roll one account's proxy, drawn exactly as the import draws. */
+  assignStock: (id: string) =>
+    req<StockAccount>(`/api/stock-accounts/${id}/assign`, { method: 'POST' }),
+
+  /** The repair button: deal proxies to every account that has none — for when
+   *  proxies arrived later than the accounts did, or one was deleted. */
+  assignUnassignedStock: () =>
+    req<{ assigned: number; unassigned: number }>('/api/stock-accounts/assign-unassigned', {
+      method: 'POST',
+    }),
+
+  setStockDeployed: (id: string, deployed: boolean) =>
+    req<StockAccount>(`/api/stock-accounts/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ deployed }),
+    }),
+
+  deleteStock: (id: string) =>
+    req<{ deleted: boolean }>(`/api/stock-accounts/${id}`, { method: 'DELETE' }),
 
   onboardingPool: () => req<OnboardingPool>('/api/onboarding'),
 

@@ -26,6 +26,8 @@ import { SettingsController } from './settings/settings.controller';
 import { SheetsController } from './sheets/sheets.controller';
 import { StatsController } from './stats/stats.controller';
 import { StatsService } from './stats/stats.service';
+import { ProxiesController, StockAccountsController } from './stock/stock.controller';
+import { StockService } from './stock/stock.service';
 import { StorageService } from './storage/storage.service';
 import { PersonalityLedgerController, TargetsController } from './targets/targets.controller';
 import { RosterService } from './targets/roster.service';
@@ -67,6 +69,7 @@ import { TargetsService } from './targets/targets.service';
     ApiKeyGuard,
     OnboardingService,
     RosterService,
+    StockService,
   ],
   exports: [
     PrismaService,
@@ -93,6 +96,8 @@ import { TargetsService } from './targets/targets.service';
     // the second time in one day, which is what a checklist is for: a service
     // this module provides AND a controller injects must appear in both lists.
     RosterService,
+    // Same checklist: ProxiesController and StockAccountsController inject it.
+    StockService,
   ],
 })
 export class CoreModule {}
@@ -112,6 +117,8 @@ export class CoreModule {}
     EnrolmentController,
     SessionController,
     OnboardingController,
+    ProxiesController,
+    StockAccountsController,
   ],
 })
 export class AppModule {}

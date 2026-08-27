@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { Accounts } from './Accounts';
 import { api, type Personality } from './api';
 import { Followed } from './Followed';
 import { Import } from './Import';
 import { Login } from './Login';
 import { Personalities } from './Personalities';
+import { Proxies } from './Proxies';
 import { Settings } from './Settings';
 import { Sheets } from './Sheets';
 import { Stats } from './Stats';
@@ -18,6 +20,11 @@ type View =
   | { tab: 'sheets' }
   | { tab: 'targeting' }
   | { tab: 'import' }
+  // OUR stock, not the software's: the proxies we bought and the accounts
+  // waiting to be installed on emulators. 'accounts' here never means the
+  // Account rows on the Personalities screen.
+  | { tab: 'accounts' }
+  | { tab: 'proxies' }
   | { tab: 'settings' };
 
 export default function App() {
@@ -164,6 +171,22 @@ export default function App() {
             <span className="navlabel">Import</span>
           </button>
           <button
+            className={view.tab === 'accounts' ? 'on' : ''}
+            onClick={() => setView({ tab: 'accounts' })}
+            title="Accounts — our stock, waiting for emulators"
+          >
+            <IconIdCard />
+            <span className="navlabel">Accounts</span>
+          </button>
+          <button
+            className={view.tab === 'proxies' ? 'on' : ''}
+            onClick={() => setView({ tab: 'proxies' })}
+            title="Proxies — our stock, one behind each account"
+          >
+            <IconGlobe />
+            <span className="navlabel">Proxies</span>
+          </button>
+          <button
             className={view.tab === 'settings' ? 'on' : ''}
             onClick={() => setView({ tab: 'settings' })}
             title="Settings"
@@ -199,6 +222,10 @@ export default function App() {
           {view.tab === 'targeting' && <Targeting />}
 
           {view.tab === 'import' && <Import />}
+
+          {view.tab === 'accounts' && <Accounts />}
+
+          {view.tab === 'proxies' && <Proxies />}
 
           {view.tab === 'settings' && <Settings />}
 
@@ -319,6 +346,29 @@ function IconExit() {
       <path d="M9.8 2.8H4.2a1.4 1.4 0 0 0-1.4 1.4v7.6a1.4 1.4 0 0 0 1.4 1.4h5.6" />
       <path d="M12 5.6 14.4 8 12 10.4" />
       <path d="M14.4 8H6.8" />
+    </svg>
+  );
+}
+
+/* A credential on a card: the face, and the lines it signs in with. */
+function IconIdCard() {
+  return (
+    <svg {...stroke16}>
+      <rect x="1.8" y="3.2" width="12.4" height="9.6" rx="1.4" />
+      <circle cx="5.4" cy="6.9" r="1.5" />
+      <path d="M3.6 10.6c.4-1.2 1-1.7 1.8-1.7s1.4.5 1.8 1.7" />
+      <path d="M9.4 6.2h3M9.4 8.6h3" />
+    </svg>
+  );
+}
+
+/* The network the proxies stand in front of. */
+function IconGlobe() {
+  return (
+    <svg {...stroke16}>
+      <circle cx="8" cy="8" r="5.6" />
+      <ellipse cx="8" cy="8" rx="2.5" ry="5.6" />
+      <path d="M2.4 8h11.2" />
     </svg>
   );
 }

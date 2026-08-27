@@ -165,6 +165,12 @@ export const money = (v: unknown, dp = 2): string => `$${num(v).toFixed(dp)}`;
 export const rate = (hit: number, of: number): string =>
   of > 0 ? `${Math.round((hit / of) * 100)}%` : '—';
 
+/** A proxy as one typeable line: scheme://host:port. The credentials stay
+ *  beside it, not inside it — an emulator's dialog asks for them separately,
+ *  and a password with an @ in it would make the inline form ambiguous. */
+export const proxyAddr = (p: { protocol: string; host: string; port: number }): string =>
+  `${p.protocol}://${p.host}:${p.port}`;
+
 /** A sheet still extracting has no timestamp yet; "Invalid Date" is not a status. */
 export function when(iso: string | null | undefined): string {
   if (!iso) return '—';
