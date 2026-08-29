@@ -40,6 +40,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { startOfToday, utcLiteral } from '../common/day';
 import { entriesFrom, extractJson } from '../extraction/sheet-task';
 import { normHandle } from '../extraction/normalize';
+import { HANDS_OUT } from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export type Verdict = 'add' | 'reject' | 'leave';
@@ -131,13 +132,15 @@ export class RosterService {
           sessionCap: number;
           windowMinutes: number;
           enabled: boolean;
+          phase: string;
         }[]
       >`
         SELECT a."personalityId" AS "personalityId",
                c."dailyCapPerAccount" AS "dailyCap",
                c."sessionCapPerAccount" AS "sessionCap",
                c."sessionWindowMinutes" AS "windowMinutes",
-               a.enabled
+               a.enabled,
+               a.phase AS "phase"
         FROM accounts a
         JOIN personalities p ON p.id = a."personalityId"
         JOIN clients c ON c.id = p."clientId"
@@ -145,6 +148,34 @@ export class RosterService {
         FOR UPDATE OF a
       `;
       if (!account) throw new NotFoundException('account not found');
+
+      // AN ACCOUNT STILL BEING WIPED IS ANSWERED WITH NOTHING TO DO.
+      //
+      // The claim has said this since the phase existed; this endpoint did not,
+      // and this endpoint is the one the cycle actually uses for the roster
+      // walk. So an un-wiped account POSTing the previous owner's Quick Add was
+      // handed `add` verdicts and charged a cap slot for each -- the exact
+      // thing the phase was added to prevent, on the busier of the two paths.
+      //
+      // Every handle comes back `leave`, not `reject`: a reject is a Snapchat
+      // hide, which is irreversible and would spend the previous owner's roster
+      // on a decision nobody has made yet. Refusing before the counting also
+      // means nothing is charged, and `room` is never even computed.
+      if (!HANDS_OUT.has(account.phase)) {
+        return {
+          verdicts: asked.map((handle) => ({
+            handle,
+            do: 'leave' as const,
+            why: 'this account is still being cleaned up',
+          })),
+          // Zero rather than the real cap. There is no room, and saying
+          // otherwise is how a machine spends a capture and a vision call
+          // working out for itself that it was going to be refused.
+          remainingToday: 0,
+          remainingInWindow: 0,
+          sessionWindowMinutes: account.windowMinutes,
+        };
+      }
 
       const [used] = await tx.$queryRaw<{ n: number }[]>`
         SELECT count(*)::int AS n FROM assignments

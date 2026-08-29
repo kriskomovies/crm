@@ -16,7 +16,13 @@
 import { ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 
 import { startOfToday, utcLiteral } from '../common/day';
-import { effectiveCaps } from '../onboarding/onboarding.service';
+import {
+  HANDS_OUT,
+  ONBOARD_TARGET,
+  PHASES,
+  effectiveCaps,
+  phaseRank,
+} from '../onboarding/onboarding.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 export interface TargetRow {
@@ -171,26 +177,76 @@ export class TargetsService {
   }
 
   /**
-   * The agent has finished wiping this account. -> the phase it is now in.
+   * Move an account UP the ladder, never down. -> the phase it is now in.
    *
-   * cleanup -> seeding, once and only once: the timestamp is what makes a
-   * repeat visible, and an account already past cleanup is left exactly where it
-   * is rather than being sent backwards by a duplicate report from a machine
-   * that retried.
+   * The comparison and the write are one statement on purpose. The version this
+   * replaces read the row, decided, then wrote -- with no lock -- which was
+   * survivable only while there was a single edge in the graph and both racers
+   * wrote the same value. With five rungs, two reports arriving together can
+   * carry DIFFERENT targets, and a read-then-write lets the lower one land last
+   * and quietly undo the higher. Naming every rung below the target in the
+   * WHERE makes Postgres do the comparison while it holds the row, so the loser
+   * of a race matches nothing and changes nothing.
+   *
+   * `cleanedAt` is stamped on arrival at `seeding` and nowhere else: the wipe
+   * has three steps but "when was this account wiped" is one fact. Because the
+   * WHERE only matches an account still below `seeding`, an account already
+   * there keeps its original timestamp -- a repeat report cannot move it.
    */
-  async markCleaned(accountId: string): Promise<string> {
-    const account = await this.prisma.account.findUnique({
+  private async advancePhase(accountId: string, to: string): Promise<string> {
+    const below = PHASES.filter((p) => phaseRank(p) < phaseRank(to));
+    if (below.length) {
+      await this.prisma.account.updateMany({
+        where: { id: accountId, phase: { in: below } },
+        data: {
+          phase: to as (typeof PHASES)[number],
+          ...(to === 'seeding' ? { cleanedAt: new Date() } : {}),
+        },
+      });
+    }
+    return this.phaseOf(accountId);
+  }
+
+  /**
+   * The agent has finished one step of the wipe. -> the phase it is now in.
+   *
+   * The machine reports the STEP IT FINISHED, not the phase it thinks it is
+   * entering, and the server does the mapping. That keeps the order of the
+   * ladder in one place: an agent that learns to do the three steps in some
+   * other order, or to do them all in one pass, cannot invent a new sequence by
+   * reporting a phase name.
+   *
+   * Idempotent in both directions. Re-reporting a step already passed matches no
+   * row and answers with where the account really is; reporting the LAST step
+   * without the earlier ones jumps the account straight to `seeding`, which is
+   * what an agent that wiped everything in one visit should be able to say.
+   */
+  async reportCleanupStep(
+    accountId: string,
+    done: 'contacts' | 'chats' | 'friends' = 'friends',
+  ): Promise<string> {
+    const exists = await this.prisma.account.findUnique({
       where: { id: accountId },
-      select: { phase: true },
+      select: { id: true },
     });
-    if (!account) throw new NotFoundException('account not found');
-    if (account.phase !== 'cleanup') return account.phase;
-    const next = await this.prisma.account.update({
-      where: { id: accountId },
-      data: { phase: 'seeding', cleanedAt: new Date() },
-      select: { phase: true },
-    });
-    return next.phase;
+    if (!exists) throw new NotFoundException('account not found');
+    const next = { contacts: 'cleanup_chats', chats: 'cleanup_friends',
+                   friends: 'seeding' }[done];
+    return this.advancePhase(accountId, next);
+  }
+
+  /**
+   * The account has added enough people by search to stop being new.
+   *
+   * Called from report() on the follow that reaches the target, because that is
+   * the moment it becomes true. Before this existed, `established` was a rung
+   * nothing ever wrote: the phase said `seeding` forever while effectiveCaps --
+   * reading onboardedCount, not phase -- had long since started metering the
+   * account as established. Two ladders, disagreeing, and the console could only
+   * see the one that was wrong.
+   */
+  private async markEstablished(accountId: string): Promise<void> {
+    await this.advancePhase(accountId, 'established');
   }
 
   /** This account's phase, for the reply the agent acts on. */
@@ -199,7 +255,11 @@ export class TargetsService {
       where: { id: accountId },
       select: { phase: true },
     });
-    return a?.phase ?? 'established';
+    // An account that does not exist is answered with the FIRST rung, not the
+    // last. This is a gate: "I cannot tell where this account is" must fall on
+    // the side that hands out nothing. The old fail-open default here said
+    // 'established', which was the one answer guaranteed to be unsafe.
+    return a?.phase ?? PHASES[0];
   }
 
   /** Seconds an agent waits between follows. Served, never acted on here. */
@@ -294,7 +354,11 @@ export class TargetsService {
       // Seeding an account whose contact sync is still on means Snapchat
       // re-suggesting the very people about to be deleted, and a cap slot spent
       // on a roster that is about to change underneath it.
-      if (row.phase === 'cleanup') {
+      //
+      // Asked as "is this phase allowed to receive" rather than "is it one of
+      // the cleanup rungs": a rung added later joins the REFUSING side by
+      // default, which is the direction a mistake here should fall.
+      if (!HANDS_OUT.has(row.phase)) {
         return { targets: [], remainingInWindow: 0,
                  sessionWindowMinutes: row.windowMinutes };
       }
@@ -615,10 +679,18 @@ export class TargetsService {
     // that actually landed: a search that found nobody taught Snapchat nothing
     // about this account, which is the whole thing the fifty are for.
     if (result === 'followed' && person.source === 'manual') {
-      await this.prisma.account.update({
+      const { onboardedCount } = await this.prisma.account.update({
         where: { id: accountId },
         data: { onboardedCount: { increment: 1 } },
+        select: { onboardedCount: true },
       });
+      // The moment the fiftieth searched add lands is the moment this account
+      // stops being new, so it is the moment the phase should say so. Read off
+      // the same update that did the incrementing rather than counted again:
+      // two follows finishing together would otherwise both read 49.
+      if (onboardedCount >= ONBOARD_TARGET) {
+        await this.markEstablished(accountId);
+      }
     }
   }
 

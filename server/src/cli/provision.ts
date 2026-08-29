@@ -151,7 +151,21 @@ export async function main(): Promise<void> {
       await prisma.account.upsert({
         where: { personalityId_label: { personalityId: personality.id, label } },
         update: {},
-        create: { personalityId: personality.id, label, enabled: true },
+        // 'seeding', NOT the schema default. This command bootstraps a CRM
+        // around accounts that already exist and are already running -- the
+        // labels are typed in by an operator naming accounts they own -- and
+        // the first rung of the ladder would tell the agent to delete their
+        // friends, conversations and contacts. Same reasoning as the phase
+        // migration's backfill: where nothing knows whether an account was
+        // wiped, the destructive guess is the wrong one. onboardedCount is
+        // still 0, so a genuinely new account here is search-seeded and
+        // graduates to 'established' on its own.
+        create: {
+          personalityId: personality.id,
+          label,
+          enabled: true,
+          phase: 'seeding',
+        },
       }),
     );
   }

@@ -382,6 +382,14 @@ async function main(): Promise<void> {
           // One account per personality is paused, because the handout and the
           // spread-by-queue-depth paths both have to skip disabled accounts.
           enabled: ai !== 5,
+          // A demo of a farm at WORK, so its accounts are past the wipe. On the
+          // schema default they would every one of them sit on the first
+          // cleanup rung being handed nothing, and the demo would show a
+          // dashboard of accounts doing precisely that. One is left mid-ladder
+          // on purpose, so the onboarding column has something to show.
+          phase: (ai === 2 ? 'cleanup_chats' : 'established') as
+            | 'cleanup_chats'
+            | 'established',
         };
         accounts.push(account);
         await prisma.account.create({ data: { personalityId, ...account } });

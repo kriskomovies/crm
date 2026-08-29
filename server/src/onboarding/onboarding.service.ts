@@ -30,6 +30,7 @@
  * has is never seeded twice.
  */
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import type { AccountPhase } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -42,6 +43,57 @@ import { PrismaService } from '../prisma/prisma.service';
  * reaches this code when the account has nothing queued of its own.
  */
 export const ONBOARD_TARGET = 50;
+
+/**
+ * The rungs of an account's life, IN ORDER. The order is the whole point.
+ *
+ * Everything else here compares positions in this array rather than testing
+ * values, so "forwards" has exactly one definition. Reordering this changes what
+ * the server will accept as progress, which is why it is a single exported
+ * constant and not an assumption spread across three call sites.
+ *
+ * It restates prisma's `enum AccountPhase`, which cannot be read at runtime as
+ * an ordered thing -- Prisma generates an object whose key order is not part of
+ * the contract. `satisfies readonly AccountPhase[]` is what makes the two fail
+ * to compile if they ever disagree on the SET of values; nothing but review
+ * catches a disagreement about their ORDER.
+ */
+export const PHASES = [
+  'cleanup_contacts',
+  'cleanup_chats',
+  'cleanup_friends',
+  'seeding',
+  'established',
+] as const satisfies readonly AccountPhase[];
+
+/**
+ * How far up the ladder a phase is. -1 for anything unrecognised.
+ *
+ * Unrecognised sorts BELOW every real rung on purpose: a value this build has
+ * never heard of is one a newer build wrote, and the safe reading of "I do not
+ * know where this account is" is the one that hands out nothing.
+ */
+export function phaseRank(phase: string): number {
+  return (PHASES as readonly string[]).indexOf(phase);
+}
+
+/**
+ * Whether an account in this phase may be handed people to add.
+ *
+ * A SET rather than `!phase.startsWith('cleanup')`, because a rung added later
+ * would silently join the handing-out side under a prefix test -- the failure
+ * would be an un-wiped account being given targets, which is the one thing this
+ * whole ladder exists to prevent. Adding a phase should default to refusing.
+ */
+export const HANDS_OUT: ReadonlySet<string> = new Set<AccountPhase>([
+  'seeding',
+  'established',
+]);
+
+/** Whether this phase is part of the wipe, i.e. before anything is handed out. */
+export function isCleanup(phase: string): boolean {
+  return !HANDS_OUT.has(phase);
+}
 
 /**
  * Which pair of caps meters this account, given how far into onboarding it is.

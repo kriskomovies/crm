@@ -142,6 +142,61 @@ describe('every list endpoint answers in the {items, nextCursor} envelope', () =
   });
 });
 
+describe('POST /v1/accounts/:id/targets/cleaned walks the wipe up one rung at a time', () => {
+  it('answers each reported step with the phase the account is now in', async () => {
+    const c = await ctx();
+    await prisma.account.update({
+      where: { id: c.accountId },
+      data: { phase: 'cleanup_contacts' },
+    });
+
+    const steps = [
+      ['contacts', 'cleanup_chats'],
+      ['chats', 'cleanup_friends'],
+      ['friends', 'seeding'],
+    ] as const;
+    for (const [done, expected] of steps) {
+      const res = await api.post(`/v1/accounts/${c.accountId}/targets/cleaned`, {
+        auth: c.auth,
+        body: { done },
+      });
+      expect(res.status).toBe(201);
+      expect(Object.keys(res.body).sort()).toEqual(['ok', 'phase']);
+      expect(res.body).toEqual({ ok: true, phase: expected });
+    }
+  });
+
+  it('takes no body at all as "the whole wipe is done"', async () => {
+    // Also the shape every machine speaking the one-transition version of this
+    // endpoint sends, so this is the compatibility assertion as much as it is
+    // the convenience one.
+    const c = await ctx();
+    await prisma.account.update({
+      where: { id: c.accountId },
+      data: { phase: 'cleanup_contacts' },
+    });
+
+    const res = await api.post(`/v1/accounts/${c.accountId}/targets/cleaned`, {
+      auth: c.auth,
+      body: {},
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toEqual({ ok: true, phase: 'seeding' });
+  });
+
+  it('refuses a step it has never heard of rather than guessing a rung', async () => {
+    const c = await ctx();
+
+    const res = await api.post(`/v1/accounts/${c.accountId}/targets/cleaned`, {
+      auth: c.auth,
+      body: { done: 'everything' },
+    });
+
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
   it('answers the claim shape and nothing else', async () => {
     const c = await ctx();
@@ -401,7 +456,20 @@ describe('the non-list endpoints', () => {
     expect(res.status).toBe(200);
     // dailyCap is still in the shape and still describes this account -- it is
     // the client's setting, reported rather than stored here.
-    expect(Object.keys(res.body).sort()).toEqual(['dailyCap', 'enabled', 'id', 'label']);
+    //
+    // phase and onboardedCount are here because the browser puts this reply
+    // straight back into the row it is rendering: a field this literal drops is
+    // a column that blanks out the moment an operator presses pause. This
+    // method builds its own literal rather than going through accountView, so
+    // this assertion is the only thing holding the two in step.
+    expect(Object.keys(res.body).sort()).toEqual([
+      'dailyCap',
+      'enabled',
+      'id',
+      'label',
+      'onboardedCount',
+      'phase',
+    ]);
     expect(res.body).toMatchObject({ dailyCap: 50, enabled: false });
   });
 

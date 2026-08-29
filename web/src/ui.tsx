@@ -156,6 +156,85 @@ export function HealthPill({ a }: { a: Parameters<typeof health>[0] }) {
   );
 }
 
+/**
+ * Searched adds an account needs before it stops being new.
+ *
+ * The server's ONBOARD_TARGET, restated. It is deliberately not sent per row: it
+ * is one constant for every account, and a denominator that can change under a
+ * browser holding a stale copy is worse than one this file states outright.
+ */
+export const ONBOARD_TARGET = 50;
+
+/**
+ * Where an account is in its life, said in words an operator can act on.
+ *
+ * The wipe is the slow part -- three steps on a device nobody is watching, and
+ * an account being cleaned is handed nothing at all. Without this the console
+ * showed such an account as simply idle, which looks exactly like a spent cap
+ * or a stalled agent. That ambiguity is the whole reason this is on the row.
+ *
+ * An unknown phase is shown VERBATIM rather than hidden or called completed: a
+ * server one version ahead should make this page look out of date, not make an
+ * account look finished when nobody knows whether it is.
+ */
+export function onboarding(a: { phase: string; onboardedCount: number }): {
+  label: string;
+  tone: 'cleanup' | 'seeding' | 'done' | 'unknown';
+  why: string;
+} {
+  switch (a.phase) {
+    case 'cleanup_contacts':
+      return {
+        label: 'desyncing contacts',
+        tone: 'cleanup',
+        why: 'clearing the contacts the previous owner synced, so Snapchat stops suggesting them — nothing is handed to this account until the whole wipe is done',
+      };
+    case 'cleanup_chats':
+      return {
+        label: 'deleting chats',
+        tone: 'cleanup',
+        why: 'clearing the previous owner’s conversations — nothing is handed to this account until the whole wipe is done',
+      };
+    case 'cleanup_friends':
+      return {
+        label: 'deleting friends',
+        tone: 'cleanup',
+        why: 'removing the previous owner’s friends, the last and irreversible step of the wipe — nothing is handed to this account until it finishes',
+      };
+    case 'seeding':
+      return {
+        label: `adding ${num(a.onboardedCount)}/${ONBOARD_TARGET}`,
+        tone: 'seeding',
+        why: `wiped, and being given people to add BY SEARCH — ${num(a.onboardedCount)} of ${ONBOARD_TARGET} landed. Snapchat suggests a fresh account nobody, so the ordinary roster walk has nothing to work with until this fills.`,
+      };
+    case 'established':
+      return {
+        label: 'completed',
+        tone: 'done',
+        why: 'onboarded — Quick Add has a roster of its own, so the ordinary walk works',
+      };
+    default:
+      return {
+        label: a.phase || 'unknown',
+        tone: 'unknown',
+        why: 'a phase this page does not know about — the server is probably newer than the console',
+      };
+  }
+}
+
+/** The ladder as a pill. Its own tone scale rather than health's, because how
+ *  far through onboarding an account is and whether Snapchat is refusing its
+ *  adds are two different questions -- one stylesheet rule for both is how they
+ *  would start looking like one. */
+export function PhasePill({ a }: { a: Parameters<typeof onboarding>[0] }) {
+  const o = onboarding(a);
+  return (
+    <span className={`pill phase-${o.tone}`} title={o.why}>
+      {o.label}
+    </span>
+  );
+}
+
 /** Thousands separators, because six-figure profile counts are unreadable raw. */
 export const count = (v: unknown): string => num(v).toLocaleString();
 

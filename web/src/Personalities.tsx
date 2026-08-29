@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { api, type Account, type CapReset, type Personality } from './api';
-import { CapBar, HealthPill } from './ui';
+import { CapBar, HealthPill, PhasePill } from './ui';
 
 /**
  * The main screen: every personality, its accounts, and how much of each
@@ -162,6 +162,9 @@ function PersonalityCard({
                 <tr>
                   <th>account</th>
                   <th>status</th>
+                  <th title="Where this account is in its life. A bought account is wiped first — contacts, chats, then friends — and is handed nobody until that finishes. Then it is seeded by search until it has 50 adds of its own, after which the ordinary Quick Add walk takes over.">
+                    onboarding
+                  </th>
                   <th className="cap-col">daily cap used</th>
                   {/* The three counts that need explaining carry it in a title
                       rather than in prose under the table. The prose was two
@@ -268,6 +271,15 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
         <td data-label="status">
           <HealthPill a={a} />
         </td>
+        {/* Beside health rather than folded into it. An account being wiped is
+            not unhealthy, it is early -- and the two answer different questions:
+            health is about whether Snapchat is refusing this account, this is
+            about whether the account is ready to be asked yet. An account below
+            `seeding` is handed nothing, so without this column a wipe in
+            progress and a stalled agent look identical. */}
+        <td data-label="onboarding">
+          <PhasePill a={a} />
+        </td>
         {/* The bar is follows LANDED, not slots handed out. A slot is charged
             at handout, so a row the walk never reached spends one and adds
             nobody -- this account read 240/240 on a day it followed 196 people.
@@ -346,7 +358,7 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
         <tr>
           {/* Eight columns: account, status, cap, queued, followed, failed today,
               already followed, actions. */}
-          <td className="rowdetail" data-label="" colSpan={8}>
+          <td className="rowdetail" data-label="" colSpan={9}>
             {asking && (
               <>
                 <p className="rowdetail-p">

@@ -226,6 +226,13 @@ describe('the account row shape', () => {
       'handedToday',
       'id',
       'label',
+      // The onboarding ladder, added so the console can show where an account
+      // is in its life. Both are here rather than one: a phase of `seeding`
+      // means nothing to an operator without the count of how far through it
+      // is, and the count means nothing without the phase to say the wipe is
+      // even finished.
+      'onboardedCount',
+      'phase',
       'queued',
       'rejected',
       'remainingToday',

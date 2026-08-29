@@ -121,6 +121,19 @@ class RosterDto {
   onboarding?: boolean;
 }
 
+/**
+ * Which step of the wipe the agent has just finished.
+ *
+ * Optional: no body means all of it, which keeps every machine still sending
+ * the bodyless version of this call working and gives an agent that wiped
+ * everything in one visit the honest way to say so.
+ */
+class CleanupStepDto {
+  @IsOptional()
+  @IsIn(['contacts', 'chats', 'friends'])
+  done?: 'contacts' | 'chats' | 'friends';
+}
+
 class ReportDto {
   @IsIn(['followed', 'failed', 'skipped'])
   result!: FollowResult;
@@ -403,21 +416,29 @@ export class TargetsController {
   }
 
   /**
-   * The agent has wiped this account: friends, conversations, synced contacts.
+   * The agent has finished one step of the wipe. -> the phase it is now in.
    *
-   * The server cannot see any of that -- it is all on the device -- so this is
-   * the machine reporting a fact only it can know, exactly as a follow result
-   * is. Moves cleanup -> seeding, which is what starts the account being handed
-   * people to search for.
+   * The server cannot see any of this -- friends, conversations and synced
+   * contacts are all on the device -- so this is the machine reporting a fact
+   * only it can know, exactly as a follow result is.
    *
-   * No body, and idempotent: a machine that retried after a dropped reply must
-   * not send an account backwards, so an account already past cleanup is
-   * answered with the phase it is actually in.
+   * The body names the step FINISHED, and the server decides which rung that
+   * lands on. An absent body means the whole wipe is done, which is what an
+   * agent that did all three in one visit should be able to say, and is also
+   * what the single-step version of this endpoint used to mean.
+   *
+   * Idempotent, because a machine that retried after a dropped reply must not
+   * send an account backwards: a step already passed matches no row and is
+   * answered with the phase the account is really in.
    */
   @Post('cleaned')
-  async cleaned(@Param('accountId') accountId: string, @Req() req: any) {
+  async cleaned(
+    @Param('accountId') accountId: string,
+    @Body() dto: CleanupStepDto,
+    @Req() req: any,
+  ) {
     await this.assertOwned(accountId, req.client.id);
-    const phase = await this.targets.markCleaned(accountId);
+    const phase = await this.targets.reportCleanupStep(accountId, dto?.done);
     return { ok: true, phase };
   }
 }

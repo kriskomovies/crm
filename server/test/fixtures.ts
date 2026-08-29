@@ -24,6 +24,7 @@ import { PipelineService } from '../src/pipeline/pipeline.service';
 import { RetentionService } from '../src/retention/retention.service';
 import { StorageService } from '../src/storage/storage.service';
 import { TargetsService } from '../src/targets/targets.service';
+import { RosterService } from '../src/targets/roster.service';
 
 export const prisma = new PrismaClient();
 
@@ -38,6 +39,9 @@ const retention = new RetentionService(prisma as any, storage);
 const pipeline = new PipelineService(prisma as any, storage, new GatewayClient(), retention);
 export const personalities = new PersonalitiesService(prisma as any, pipeline, retention);
 export const targets = new TargetsService(prisma as any);
+/** The OTHER handout path. The cycle uses this one for the roster walk, so a
+ *  rule that is only enforced in TargetsService.claim is only half enforced. */
+export const roster = new RosterService(prisma as any);
 
 export interface TestAccount {
   id: string;
@@ -71,10 +75,18 @@ interface FixtureOptions {
   /** The two caps that REPLACE the pair above while an account is ONBOARDING. */
   onboardingDailyCap?: number;
   onboardingSessionCap?: number;
-  /** Which phase the accounts start in. Default 'established' -- see accountData:
-   *  the SCHEMA default is 'cleanup', which hands out nothing, so every cap and
-   *  claim test would be asserting against an account the server is refusing. */
-  phase?: 'cleanup' | 'seeding' | 'established';
+  /** Which rung of the ladder the accounts start on. Default 'established' --
+   *  see accountData: the SCHEMA default is the first CLEANUP rung, which hands
+   *  out nothing, so every cap and claim test would be asserting against an
+   *  account the server is refusing. This union is very nearly the only
+   *  compile-time check on a phase string anywhere in the repo, so keep it
+   *  spelled out rather than widening it to `string`. */
+  phase?:
+    | 'cleanup_contacts'
+    | 'cleanup_chats'
+    | 'cleanup_friends'
+    | 'seeding'
+    | 'established';
   /** Create the accounts as still onboarding. Default FALSE -- see accountData:
    *  a test that says `dailyCap: 7` means "an account capped at 7", and an
    *  onboarding account is not metered by that number at all. */
@@ -102,9 +114,9 @@ function accountData(name: string, opts: FixtureOptions) {
   // to. Tests about onboarding pass `onboarding: true` and say so.
   const onboardedCount = opts.onboarding ? 0 : ONBOARD_TARGET;
   // 'established' unless asked, and NOT the schema default. A fresh row defaults
-  // to 'cleanup', which is handed nothing at all -- so every existing cap and
-  // claim test would be measuring a refusal rather than the cap it set. Tests
-  // about the phase say which one they mean.
+  // to 'cleanup_contacts', the first rung of the wipe, which is handed nothing
+  // at all -- so every existing cap and claim test would be measuring a refusal
+  // rather than the cap it set. Tests about the phase say which one they mean.
   const phase = opts.phase ?? (opts.onboarding ? 'seeding' : 'established');
   return Array.from({ length: count }, (_, i) => ({
     label: `${name}_snap_${String(i + 1).padStart(2, '0')}`,

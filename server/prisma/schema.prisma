@@ -366,29 +366,42 @@ model Account {
   onboardedCount Int @default(0)
 
   /// Where this account is in its life, and therefore what the agent does with
-  /// it when the rotation arrives.
+  /// it when the rotation arrives. A LADDER: every rung is passed once, in
+  /// order, and nothing ever moves back down it.
   ///
-  ///   cleanup      a bought account still carrying the last owner's friends,
-  ///                conversations and synced contacts. NOTHING is handed to it:
-  ///                seeding an account whose contact sync is still on means
-  ///                Snapchat re-suggesting people we are about to wipe, and a
-  ///                cap slot spent on a roster that is about to change.
-  ///   seeding      cleaned, and being given people to add BY SEARCH because
-  ///                Snapchat suggests a fresh account nobody. onboardedCount
-  ///                counts the progress; ONBOARD_TARGET ends it.
-  ///   established  Quick Add has a roster of its own, so the walk works.
+  ///   cleanup_contacts  a bought account still carrying the last owner's
+  ///                     world. Contact sync goes first, because until it is
+  ///                     off Snapchat keeps re-suggesting the very people the
+  ///                     next two rungs are about to delete.
+  ///   cleanup_chats     conversations, cleared while the friend list is still
+  ///                     intact and there is therefore something to find them
+  ///                     by.
+  ///   cleanup_friends   the friend list itself, last because it is the
+  ///                     irreversible half.
+  ///   seeding           wiped, and being given people to add BY SEARCH because
+  ///                     Snapchat suggests a fresh account nobody.
+  ///                     onboardedCount counts the progress; ONBOARD_TARGET
+  ///                     ends it.
+  ///   established       Quick Add has a roster of its own, so the walk works.
   ///
-  /// A separate field from onboardedCount rather than another number read out of
-  /// it, because "has this account been wiped" is not something a count of adds
-  /// can answer -- and the wipe is the one step that must not be repeated or
-  /// skipped by accident.
+  /// NOTHING IS HANDED OUT BELOW `seeding`. Every cleanup rung refuses, because
+  /// a cap slot spent on a roster that is about to be deleted buys nothing.
   ///
-  /// EXISTING ACCOUNTS DEFAULT TO `established` IN THE MIGRATION, not to the
-  /// enum's own default: a running account handed `cleanup` would be told to
-  /// delete the friends it spent a fortnight earning.
-  phase        AccountPhase @default(cleanup)
-  /// When the wipe was reported done. Null while it has not been, which is what
-  /// makes a half-finished cleanup visible instead of merely absent.
+  /// Three cleanup rungs rather than one flag because the wipe is the slowest
+  /// thing that happens to an account and an operator watching it needs to tell
+  /// a stuck one from a slow one. It is separate from onboardedCount for the
+  /// same reason it always was: "has this account been wiped" is not something
+  /// a count of adds can answer.
+  ///
+  /// EXISTING ACCOUNTS ARE PUT PAST CLEANUP BY THE MIGRATION, never on a
+  /// cleanup rung: an account that has been running a fortnight, handed
+  /// `cleanup_contacts`, would be told to delete the friends it spent that
+  /// fortnight earning.
+  phase        AccountPhase @default(cleanup_contacts)
+  /// When the WHOLE wipe was reported done -- stamped on arrival at `seeding`,
+  /// not on each rung. Null while it has not been, which is what makes a
+  /// half-finished cleanup visible instead of merely absent; which rung it
+  /// stalled on is `phase` itself.
   cleanedAt    DateTime?
 
   personality Personality  @relation(fields: [personalityId], references: [id], onDelete: Cascade)
@@ -617,16 +630,22 @@ model Person {
   @@map("people")
 }
 
-/// Every state here descends from a forward. A person who did not match is
-/// dropped and simply has no assignment row -- the ledger keeps them so a later
-/// rule change can pick them up, but nothing is queued for a human to decide.
-/// The three lives of an account, in order. See Account.phase.
+/// The lives of an account, in order -- and the order is load-bearing, not
+/// documentation: the server compares rungs to decide whether a report may
+/// advance an account, so a value inserted in the wrong place here silently
+/// changes what "forwards" means. See Account.phase and PHASES in
+/// onboarding.service.ts, which restates this order in TypeScript.
 enum AccountPhase {
-  cleanup
+  cleanup_contacts
+  cleanup_chats
+  cleanup_friends
   seeding
   established
 }
 
+/// Every state here descends from a forward. A person who did not match is
+/// dropped and simply has no assignment row -- the ledger keeps them so a later
+/// rule change can pick them up, but nothing is queued for a human to decide.
 enum AssignmentState {
   /// Matched the filter, waiting for its account to ask for work.
   queued

@@ -590,6 +590,16 @@ td.rowdetail::before { content: none; }
 .health-blocked { background: var(--red-dim); color: var(--red); }
 .health-paused { background: var(--inset); color: var(--muted); }
 
+/* The onboarding ladder. Deliberately not the health scale: an account being
+   wiped is not unhealthy, it is early, and colouring it amber would put a
+   warning on every freshly imported account. Cleanup and seeding are the two
+   that are still going, so they carry the colour; `completed` is muted because
+   a finished account is the one an operator does NOT need to look at. */
+.phase-cleanup { background: var(--violet-dim); color: var(--violet); }
+.phase-seeding { background: var(--blue-dim); color: var(--blue); }
+.phase-done { background: var(--inset); color: var(--muted); }
+.phase-unknown { background: var(--amber-dim); color: var(--amber); }
+
 .src { font-size: 11.5px; color: var(--muted); }
 .src-manual { color: var(--violet); }
 

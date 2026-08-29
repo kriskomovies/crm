@@ -3,6 +3,15 @@
 export type Account = {
   id: string;
   label: string;
+  /** Where this account is on the onboarding ladder: cleanup_contacts,
+   *  cleanup_chats, cleanup_friends, seeding, established. A string rather than
+   *  a union because the server owns the list -- see onboarding() in ui.tsx,
+   *  which shows an unrecognised one verbatim instead of guessing. Nothing is
+   *  handed to an account below `seeding`, which is why it is on the row. */
+  phase: string;
+  /** Searched adds landed so far, out of ONBOARD_TARGET (stated in ui.tsx, not
+   *  sent per row). Only meaningful while `phase` is 'seeding'. */
+  onboardedCount: number;
   /** The client's setting, not this account's. Edited on the Settings tab. */
   dailyCap: number;
   enabled: boolean;

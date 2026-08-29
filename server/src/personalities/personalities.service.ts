@@ -360,6 +360,15 @@ export class PersonalitiesService {
       label: updated.label,
       dailyCap: account.personality.client.dailyCapPerAccount,
       enabled: updated.enabled,
+      // Carried even though nothing here edits them: the browser patches a row
+      // and puts the reply straight back into the list it is rendering, so a
+      // field missing from this literal is a column that blanks out the moment
+      // an operator presses pause. accountView is not reachable from here --
+      // it wants counts this method never fetches -- so these two are copied,
+      // and the exact-key test in contract.http.spec.ts is what keeps the copy
+      // honest.
+      phase: updated.phase,
+      onboardedCount: updated.onboardedCount,
     };
   }
 
@@ -506,6 +515,12 @@ export class PersonalitiesService {
       // at, even though it is the client's setting and not this row's.
       dailyCap: cap,
       enabled: account.enabled,
+      // A brand-new account is on the first rung of the ladder, and the row the
+      // browser draws from this reply has to say so -- otherwise the operator
+      // adds an account and sees a blank where its onboarding status belongs
+      // until the next poll fills it in.
+      phase: account.phase,
+      onboardedCount: account.onboardedCount,
     };
   }
 
@@ -978,9 +993,29 @@ export interface ExportRow {
 const EXPORT_BATCH = 1000;
 
 /** The columns every account projection needs. Less than a full Account row. */
-type AccountRow = { id: string; label: string; enabled: boolean };
+type AccountRow = {
+  id: string;
+  label: string;
+  enabled: boolean;
+  phase: string;
+  onboardedCount: number;
+};
 
 export interface AccountView extends AccountRow {
+  /**
+   * Where this account is on the ladder: three cleanup rungs, then seeding,
+   * then established. Served because the console is the only place an operator
+   * can watch a wipe happen -- it takes twenty minutes across three steps on a
+   * device they are not looking at, and an account handing out nothing looks
+   * exactly like one with a spent cap until this says which it is.
+   */
+  phase: string;
+  /**
+   * Searched adds landed so far, out of ONBOARD_TARGET. The denominator is not
+   * sent: it is a constant, and a number the server can change under a browser
+   * holding a stale copy is worse than one the browser states itself.
+   */
+  onboardedCount: number;
   /** The client's setting, echoed per account because that is what meters it. */
   dailyCap: number;
   handedToday: number;
@@ -1086,6 +1121,8 @@ function accountView(
     label: a.label,
     dailyCap,
     enabled: a.enabled,
+    phase: a.phase,
+    onboardedCount: a.onboardedCount,
     // Still here, and load-bearing twice over: remainingToday below is computed
     // from it, and it is what the daily-cap bar draws -- the safety feature, and
     // a different column from the `handed out` state count that this change
