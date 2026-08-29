@@ -60,6 +60,15 @@ export const ROUTES: RouteSpec[] = [
     sample: `/v1/accounts/${ABSENT}/targets/someone/result`,
     body: { result: 'followed' },
   },
+  // The agent reporting a wipe it alone can see -- friends, conversations and
+  // synced contacts are all on the device. Guarded: unguarded it moves another
+  // tenant's account out of cleanup, and the account is then seeded over a
+  // roster nobody wiped.
+  {
+    method: 'POST',
+    path: '/v1/accounts/:accountId/targets/cleaned',
+    sample: `/v1/accounts/${ABSENT}/targets/cleaned`,
+  },
   // The roster call: one question about the people on screen, in place of the
   // two about the ledger it replaced. A metered WRITE -- an `add` is charged to
   // today's cap in the transaction that decided it -- so it is guarded exactly

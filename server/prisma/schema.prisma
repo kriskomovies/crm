@@ -365,6 +365,32 @@ model Account {
   /// that "half way through" is a state the console can show rather than infer.
   onboardedCount Int @default(0)
 
+  /// Where this account is in its life, and therefore what the agent does with
+  /// it when the rotation arrives.
+  ///
+  ///   cleanup      a bought account still carrying the last owner's friends,
+  ///                conversations and synced contacts. NOTHING is handed to it:
+  ///                seeding an account whose contact sync is still on means
+  ///                Snapchat re-suggesting people we are about to wipe, and a
+  ///                cap slot spent on a roster that is about to change.
+  ///   seeding      cleaned, and being given people to add BY SEARCH because
+  ///                Snapchat suggests a fresh account nobody. onboardedCount
+  ///                counts the progress; ONBOARD_TARGET ends it.
+  ///   established  Quick Add has a roster of its own, so the walk works.
+  ///
+  /// A separate field from onboardedCount rather than another number read out of
+  /// it, because "has this account been wiped" is not something a count of adds
+  /// can answer -- and the wipe is the one step that must not be repeated or
+  /// skipped by accident.
+  ///
+  /// EXISTING ACCOUNTS DEFAULT TO `established` IN THE MIGRATION, not to the
+  /// enum's own default: a running account handed `cleanup` would be told to
+  /// delete the friends it spent a fortnight earning.
+  phase        AccountPhase @default(cleanup)
+  /// When the wipe was reported done. Null while it has not been, which is what
+  /// makes a half-finished cleanup visible instead of merely absent.
+  cleanedAt    DateTime?
+
   personality Personality  @relation(fields: [personalityId], references: [id], onDelete: Cascade)
   sheets      Sheet[]
   assignments Assignment[]
@@ -594,6 +620,13 @@ model Person {
 /// Every state here descends from a forward. A person who did not match is
 /// dropped and simply has no assignment row -- the ledger keeps them so a later
 /// rule change can pick them up, but nothing is queued for a human to decide.
+/// The three lives of an account, in order. See Account.phase.
+enum AccountPhase {
+  cleanup
+  seeding
+  established
+}
+
 enum AssignmentState {
   /// Matched the filter, waiting for its account to ask for work.
   queued

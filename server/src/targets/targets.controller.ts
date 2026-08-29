@@ -251,6 +251,7 @@ export class TargetsController {
       // word rather than a boolean because there will be a third way before
       // there is a second product.
       via: onboarding ? 'search' : 'roster',
+      phase: await this.targets.phaseOf(accountId),
       // Told explicitly so the client can back off instead of hot-polling an
       // exhausted cap.
       remainingToday: await this.targets.remainingToday(accountId),
@@ -399,6 +400,25 @@ export class TargetsController {
     await this.assertOwned(accountId, req.client.id);
     await this.targets.hide(accountId, handle);
     return { ok: true };
+  }
+
+  /**
+   * The agent has wiped this account: friends, conversations, synced contacts.
+   *
+   * The server cannot see any of that -- it is all on the device -- so this is
+   * the machine reporting a fact only it can know, exactly as a follow result
+   * is. Moves cleanup -> seeding, which is what starts the account being handed
+   * people to search for.
+   *
+   * No body, and idempotent: a machine that retried after a dropped reply must
+   * not send an account backwards, so an account already past cleanup is
+   * answered with the phase it is actually in.
+   */
+  @Post('cleaned')
+  async cleaned(@Param('accountId') accountId: string, @Req() req: any) {
+    await this.assertOwned(accountId, req.client.id);
+    const phase = await this.targets.markCleaned(accountId);
+    return { ok: true, phase };
   }
 }
 

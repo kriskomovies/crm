@@ -170,6 +170,38 @@ export class TargetsService {
     return Math.max(0, dailyCap - (await this.spentToday(accountId)));
   }
 
+  /**
+   * The agent has finished wiping this account. -> the phase it is now in.
+   *
+   * cleanup -> seeding, once and only once: the timestamp is what makes a
+   * repeat visible, and an account already past cleanup is left exactly where it
+   * is rather than being sent backwards by a duplicate report from a machine
+   * that retried.
+   */
+  async markCleaned(accountId: string): Promise<string> {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { phase: true },
+    });
+    if (!account) throw new NotFoundException('account not found');
+    if (account.phase !== 'cleanup') return account.phase;
+    const next = await this.prisma.account.update({
+      where: { id: accountId },
+      data: { phase: 'seeding', cleanedAt: new Date() },
+      select: { phase: true },
+    });
+    return next.phase;
+  }
+
+  /** This account's phase, for the reply the agent acts on. */
+  async phaseOf(accountId: string): Promise<string> {
+    const a = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { phase: true },
+    });
+    return a?.phase ?? 'established';
+  }
+
   /** Seconds an agent waits between follows. Served, never acted on here. */
   async paceSeconds(accountId: string): Promise<number> {
     const account = await this.prisma.account.findUnique({
@@ -226,6 +258,7 @@ export class TargetsService {
           onboardingDailyCap: number;
           onboardingSessionCap: number;
           onboardedCount: number;
+          phase: string;
           windowMinutes: number;
           enabled: boolean;
         }[]
@@ -236,6 +269,7 @@ export class TargetsService {
                c."onboardingSessionCap" AS "onboardingSessionCap",
                c."sessionWindowMinutes" AS "windowMinutes",
                a."onboardedCount" AS "onboardedCount",
+               a.phase AS "phase",
                a.enabled
         FROM accounts a
         JOIN personalities p ON p.id = a."personalityId"
@@ -255,6 +289,16 @@ export class TargetsService {
       // The window is shared on purpose. How long a rotation takes is a property
       // of the fleet, not of one account's age, and a second window here would
       // be a second thing to keep in step for no benefit.
+      // An account still being wiped is handed NOTHING, and this is the cheapest
+      // place to say so -- before a slot is charged, inside the same lock.
+      // Seeding an account whose contact sync is still on means Snapchat
+      // re-suggesting the very people about to be deleted, and a cap slot spent
+      // on a roster that is about to change underneath it.
+      if (row.phase === 'cleanup') {
+        return { targets: [], remainingInWindow: 0,
+                 sessionWindowMinutes: row.windowMinutes };
+      }
+
       const account = {
         enabled: row.enabled,
         windowMinutes: row.windowMinutes,

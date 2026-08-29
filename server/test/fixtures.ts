@@ -71,6 +71,10 @@ interface FixtureOptions {
   /** The two caps that REPLACE the pair above while an account is ONBOARDING. */
   onboardingDailyCap?: number;
   onboardingSessionCap?: number;
+  /** Which phase the accounts start in. Default 'established' -- see accountData:
+   *  the SCHEMA default is 'cleanup', which hands out nothing, so every cap and
+   *  claim test would be asserting against an account the server is refusing. */
+  phase?: 'cleanup' | 'seeding' | 'established';
   /** Create the accounts as still onboarding. Default FALSE -- see accountData:
    *  a test that says `dailyCap: 7` means "an account capped at 7", and an
    *  onboarding account is not metered by that number at all. */
@@ -97,9 +101,15 @@ function accountData(name: string, opts: FixtureOptions) {
   // N", so the fixture has to produce the kind of account that number applies
   // to. Tests about onboarding pass `onboarding: true` and say so.
   const onboardedCount = opts.onboarding ? 0 : ONBOARD_TARGET;
+  // 'established' unless asked, and NOT the schema default. A fresh row defaults
+  // to 'cleanup', which is handed nothing at all -- so every existing cap and
+  // claim test would be measuring a refusal rather than the cap it set. Tests
+  // about the phase say which one they mean.
+  const phase = opts.phase ?? (opts.onboarding ? 'seeding' : 'established');
   return Array.from({ length: count }, (_, i) => ({
     label: `${name}_snap_${String(i + 1).padStart(2, '0')}`,
     onboardedCount,
+    phase,
   }));
 }
 

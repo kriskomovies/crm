@@ -152,6 +152,10 @@ describe('GET /v1/accounts/:id/targets is a claim, not a list', () => {
     expect(res.status).toBe(200);
     expect(Object.keys(res.body).sort()).toEqual([
       'paceSeconds',
+      // Which of the three lives this account is in. Pinned for the same reason
+      // as `via`: the agent acts on it, and an agent that stops finding it would
+      // seed an account nobody has wiped.
+      'phase',
       'refusedHandles',
       'remainingInWindow',
       'remainingToday',
