@@ -115,6 +115,25 @@ class AttachTargetsDto {
  * Pause and resume only. The cap moved to PUT /api/settings, where it is one
  * number for the whole client -- see Client.dailyCapPerAccount.
  */
+/**
+ * How far along the operator says an account already is.
+ *
+ * Named rather than implied, because the two answers mean genuinely different
+ * things: 'seeding' is "I wiped this one myself, now seed it", and
+ * 'established' is "this one is finished, just work Quick Add". A single
+ * "onboarded: true" would have had to guess which, and guessing `established`
+ * for an unwiped account is how the previous owner's friends survive.
+ *
+ * The cleanup rungs are deliberately not accepted. Moving an account BACKWARDS
+ * into the wipe is asking a machine to delete the friends of an account that may
+ * have been running for a fortnight, and nothing should be able to ask for that
+ * by typing a different string into this field.
+ */
+class MarkOnboardedDto {
+  @IsIn(['seeding', 'established'])
+  to!: 'seeding' | 'established';
+}
+
 class UpdateAccountDto {
   @IsOptional()
   @IsBoolean()
@@ -283,6 +302,30 @@ export class AccountsController {
   @HttpCode(200)
   resetDailyCap(@Param('id') id: string, @Req() req: any) {
     return this.personalities.resetDailyCap(req.client.id, id);
+  }
+
+  /**
+   * The operator says this account is further along than the ladder thinks.
+   *
+   * The agent reports the wipe as it does it, but plenty of accounts are
+   * prepared by hand -- the operator has been running the clear-friends tool on
+   * emulators directly -- and one wiped that way would otherwise sit on the
+   * first rung being handed nobody, waiting for a report that is never coming.
+   *
+   * A POST rather than a field on the PATCH above, for the same reason
+   * reset-daily-cap is: UpdateAccountDto is a whitelist of things an account IS,
+   * and this is a thing that HAPPENS to it. 200 rather than 201 because nothing
+   * was created; the body is the account row, so the browser can put it straight
+   * back into the list it is drawing.
+   */
+  @Post(':id/onboarded')
+  @HttpCode(200)
+  markOnboarded(
+    @Param('id') id: string,
+    @Body() dto: MarkOnboardedDto,
+    @Req() req: any,
+  ) {
+    return this.personalities.markOnboarded(req.client.id, id, dto.to);
   }
 
   /**

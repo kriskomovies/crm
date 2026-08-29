@@ -173,6 +173,15 @@ export const ROUTES: RouteSpec[] = [
     path: '/api/accounts/:id/reset-daily-cap',
     sample: `/api/accounts/${ABSENT}/reset-daily-cap`,
   },
+  // The operator saying an account is further along than the ladder thinks --
+  // usually because they wiped it by hand. Guarded: unguarded it would let one
+  // tenant push another's account past the cleanup it has not had, and the
+  // account is then seeded over a roster nobody cleared.
+  {
+    method: 'POST',
+    path: '/api/accounts/:id/onboarded',
+    sample: `/api/accounts/${ABSENT}/onboarded`,
+  },
 
   // OnboardingController -- the pool of handles a brand-new account is seeded
   // from. A new Snapchat account is shown no Quick Add suggestions at all, so

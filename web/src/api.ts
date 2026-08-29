@@ -569,6 +569,18 @@ export const api = {
   deletePersonality: (id: string) =>
     req<void>(`/api/personalities/${id}`, { method: 'DELETE' }),
 
+  /** The operator saying an account is further along than the ladder thinks:
+   *  'seeding' for one they wiped by hand, 'established' for one that is
+   *  already onboarded and should go straight to the Quick Add walk. Answers
+   *  with the whole account row, so the caller can replace it without a
+   *  refetch. Cleanup rungs are refused by the server -- there is deliberately
+   *  no way to send an account BACK into a wipe from here. */
+  markOnboarded: (accountId: string, to: 'seeding' | 'established') =>
+    req<Account>(`/api/accounts/${accountId}/onboarded`, {
+      method: 'POST',
+      body: JSON.stringify({ to }),
+    }),
+
   addAccount: (id: string, label: string) =>
     req<Account>(`/api/personalities/${id}/accounts`, {
       method: 'POST',

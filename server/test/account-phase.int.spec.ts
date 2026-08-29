@@ -17,7 +17,15 @@
  */
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 
-import { dropFixtures, makeClient, prisma, queueTargets, roster, targets } from './fixtures';
+import {
+  dropFixtures,
+  makeClient,
+  personalities,
+  prisma,
+  queueTargets,
+  roster,
+  targets,
+} from './fixtures';
 import { ONBOARD_TARGET, PHASES } from '../src/onboarding/onboarding.service';
 
 afterEach(dropFixtures);
@@ -253,5 +261,99 @@ describe('phase is served, because both the agent and the console act on it', ()
     // the side that hands out nothing; the previous default here was
     // 'established', the one answer guaranteed to be unsafe.
     expect(await targets.phaseOf('no-such-account')).toBe(PHASES[0]);
+  });
+});
+
+
+describe('the operator can say an account is further along than the ladder thinks', () => {
+  it('skips the wipe on request, without pretending the account is finished', async () => {
+    // "I cleared this one by hand." It still needs seeding -- it is a new
+    // account -- it just must not be told to wipe itself again.
+    const client = await makeClient({ accounts: 1, onboarding: true });
+    const account = client.personality.accounts[0];
+    await setPhase(account.id, 'cleanup_contacts');
+    await prisma.account.update({
+      where: { id: account.id },
+      data: { onboardedCount: 3 },
+    });
+
+    const view = await personalities.markOnboarded(client.id, account.id, 'seeding');
+
+    expect(view.phase).toBe('seeding');
+    // UNTOUCHED. Three searched adds have happened and claiming otherwise would
+    // hand this account to the Quick Add walk with no roster to walk.
+    expect(view.onboardedCount).toBe(3);
+    const row = await prisma.account.findUnique({
+      where: { id: account.id }, select: { cleanedAt: true },
+    });
+    expect(row!.cleanedAt).not.toBeNull();
+  });
+
+  it('fills in onboardedCount when told the account is already established', async () => {
+    // The two-ladders bug, guarded. `via` and the cap pair are both chosen from
+    // onboardedCount and not from phase, so an account marked established with
+    // a count of 0 would read "completed" on the page while the server went on
+    // seeding it by search under onboarding caps.
+    const client = await makeClient({ accounts: 1, onboarding: true, dailyCap: 240 });
+    const account = client.personality.accounts[0];
+    await setPhase(account.id, 'cleanup_chats');
+
+    const view = await personalities.markOnboarded(client.id, account.id, 'established');
+
+    expect(view.phase).toBe('established');
+    expect(view.onboardedCount).toBeGreaterThanOrEqual(ONBOARD_TARGET);
+    // ...and the caps that follow from the count have switched with it.
+    expect(view.dailyCap).toBe(240);
+  });
+
+  it('never counts an account backwards when it is already ahead', async () => {
+    const client = await makeClient({ accounts: 1 });
+    const account = client.personality.accounts[0];
+    await prisma.account.update({
+      where: { id: account.id },
+      data: { phase: 'established', onboardedCount: 120 },
+    });
+
+    const view = await personalities.markOnboarded(client.id, account.id, 'seeding');
+
+    expect(view.phase).toBe('established');
+    expect(view.onboardedCount).toBe(120);
+  });
+
+  it('does not rewrite when the wipe happened', async () => {
+    const client = await makeClient({ accounts: 1 });
+    const account = client.personality.accounts[0];
+    await setPhase(account.id, 'cleanup_contacts');
+
+    await personalities.markOnboarded(client.id, account.id, 'seeding');
+    const first = await prisma.account.findUnique({
+      where: { id: account.id }, select: { cleanedAt: true },
+    });
+    await personalities.markOnboarded(client.id, account.id, 'established');
+    const again = await prisma.account.findUnique({
+      where: { id: account.id }, select: { cleanedAt: true },
+    });
+
+    expect(again!.cleanedAt!.getTime()).toBe(first!.cleanedAt!.getTime());
+  });
+
+  it('refuses an account belonging to another client', async () => {
+    const mine = await makeClient({ accounts: 1 });
+    const theirs = await makeClient({ accounts: 1 });
+    await expect(
+      personalities.markOnboarded(mine.id, theirs.personality.accounts[0].id, 'seeding'),
+    ).rejects.toThrow();
+  });
+
+  it('makes an account handed nothing start receiving targets', async () => {
+    // The whole point, end to end: a hand-wiped account stops being refused.
+    const client = await makeClient({ accounts: 1, dailyCap: 50, onboardingDailyCap: 50 });
+    const account = client.personality.accounts[0];
+    await queueTargets(client.personality.id, account.id, 20);
+    await setPhase(account.id, 'cleanup_contacts');
+
+    expect((await targets.claim(account.id, 5)).targets).toEqual([]);
+    await personalities.markOnboarded(client.id, account.id, 'seeding');
+    expect((await targets.claim(account.id, 5)).targets).toHaveLength(5);
   });
 });

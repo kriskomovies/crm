@@ -142,6 +142,51 @@ describe('every list endpoint answers in the {items, nextCursor} envelope', () =
   });
 });
 
+describe('POST /api/accounts/:id/onboarded is the operator skipping the wipe', () => {
+  it('moves the account and answers with the row the browser is drawing', async () => {
+    const c = await ctx();
+    await prisma.account.update({
+      where: { id: c.accountId },
+      data: { phase: 'cleanup_contacts' },
+    });
+
+    const res = await api.post(`/api/accounts/${c.accountId}/onboarded`, {
+      auth: c.auth,
+      body: { to: 'seeding' },
+    });
+
+    // 200, not 201: nothing was created. The body is the full account view, so
+    // the row can be replaced without a refetch.
+    expect(res.status).toBe(200);
+    expect(res.body.phase).toBe('seeding');
+    expect(res.body).toHaveProperty('onboardedCount');
+    expect(res.body).toHaveProperty('remainingToday');
+  });
+
+  it('refuses a phase that would send an account backwards into the wipe', async () => {
+    // Not a rounding-off of the API surface: accepting a cleanup rung here
+    // would let a mistyped request order a machine to delete the friends of an
+    // account that has been running for a fortnight.
+    const c = await ctx();
+    for (const to of ['cleanup_contacts', 'cleanup_chats', 'cleanup_friends']) {
+      const res = await api.post(`/api/accounts/${c.accountId}/onboarded`, {
+        auth: c.auth,
+        body: { to },
+      });
+      expect(res.status).toBe(400);
+    }
+  });
+
+  it('refuses a request with no target at all', async () => {
+    const c = await ctx();
+    const res = await api.post(`/api/accounts/${c.accountId}/onboarded`, {
+      auth: c.auth,
+      body: {},
+    });
+    expect(res.status).toBe(400);
+  });
+});
+
 describe('POST /v1/accounts/:id/targets/cleaned walks the wipe up one rung at a time', () => {
   it('answers each reported step with the phase the account is now in', async () => {
     const c = await ctx();

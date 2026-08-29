@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 import { api, type Account, type CapReset, type Personality } from './api';
-import { CapBar, HealthPill, PhasePill } from './ui';
+import { CapBar, HealthPill, ONBOARD_TARGET, PhasePill } from './ui';
 
 /**
  * The main screen: every personality, its accounts, and how much of each
@@ -210,6 +210,13 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState<string | null>(null);
+  // Marking an account onboarded also asks first, because the two answers mean
+  // different things and picking the wrong one is not free: telling the server
+  // an unwiped account is established leaves the previous owner's friends on it
+  // for good, since nothing will ever be told to clear them.
+  const [claiming, setClaiming] = useState(false);
+  const [marking, setMarking] = useState(false);
+  const [markErr, setMarkErr] = useState<string | null>(null);
 
   // Pause and resume is all that is left here. The cap moved to Settings: it is
   // one number for the whole client, and twenty rows each offering to edit it
@@ -224,6 +231,20 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const markOnboarded = async (to: 'seeding' | 'established') => {
+    setMarking(true);
+    setMarkErr(null);
+    try {
+      await api.markOnboarded(a.id, to);
+      setClaiming(false);
+      onChanged();
+    } catch (e) {
+      setMarkErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setMarking(false);
     }
   };
 
@@ -337,6 +358,21 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
           >
             {asking ? 'keep it' : 'reset cap'}
           </button>
+          {/* Hidden once the account IS established: there is nothing left to
+              skip, and a button that silently does nothing is worse than no
+              button. */}
+          {a.phase !== 'established' && (
+            <button
+              className="link"
+              disabled={marking}
+              onClick={() => {
+                setMarkErr(null);
+                setClaiming((v) => !v);
+              }}
+            >
+              {claiming ? 'keep it' : 'onboarded'}
+            </button>
+          )}
           <button
             className="link danger"
             disabled={deleting}
@@ -354,7 +390,7 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
       {/* A second row rather than something crammed into the actions cell: what
           this button does needs a sentence before it fires, and a sentence does
           not fit in a column that is mostly numbers. */}
-      {(asking || freed || resetErr || confirmDelete || deleteErr) && (
+      {(asking || freed || resetErr || confirmDelete || deleteErr || claiming || markErr) && (
         <tr>
           {/* Eight columns: account, status, cap, queued, followed, failed today,
               already followed, actions. */}
@@ -384,6 +420,43 @@ function AccountRow({ a, onChanged }: { a: Account; onChanged: () => void }) {
                     Cancel
                   </button>
                 </div>
+              </>
+            )}
+
+            {claiming && (
+              <>
+                <p className="rowdetail-p">
+                  How far along is <code>{a.label}</code> really? A bought account starts by
+                  being wiped — contacts, chats, then friends — and is handed{' '}
+                  <strong>nobody</strong> until that is reported done. If you cleared it
+                  yourself, say so here and it stops waiting for a report that is never
+                  coming.
+                </p>
+                <p className="rowdetail-p muted">
+                  Neither answer can send an account backwards, so there is no way to ask for
+                  a wipe from this page. Whatever this account has already added is kept.
+                </p>
+                {markErr && <p className="error small">{markErr}</p>}
+                <div className="rowdetail-actions">
+                  <button
+                    className="primary"
+                    disabled={marking}
+                    onClick={() => void markOnboarded('seeding')}
+                  >
+                    {marking ? 'Saving…' : 'I cleared it — start adding by search'}
+                  </button>
+                  <button disabled={marking} onClick={() => void markOnboarded('established')}>
+                    It is fully onboarded — go straight to Quick Add
+                  </button>
+                  <button disabled={marking} onClick={() => setClaiming(false)}>
+                    Cancel
+                  </button>
+                </div>
+                <p className="rowdetail-p muted">
+                  “Fully onboarded” also counts this account as having its {ONBOARD_TARGET} searched adds,
+                  because that number — not the label above — is what decides whether the
+                  server hands it names to search for or a roster to walk.
+                </p>
               </>
             )}
 

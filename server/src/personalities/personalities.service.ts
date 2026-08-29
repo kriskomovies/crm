@@ -22,7 +22,11 @@ import {
 import { AssignmentState, Prisma } from '@prisma/client';
 
 import { startOfToday } from '../common/day';
-import { effectiveCaps } from '../onboarding/onboarding.service';
+import {
+  ONBOARD_TARGET,
+  effectiveCaps,
+  phaseRank,
+} from '../onboarding/onboarding.service';
 import { pageSize, slicePage } from '../common/pagination';
 import { cleanDisplayName, isPlausibleHandle, normHandle } from '../extraction/normalize';
 import { PipelineService } from '../pipeline/pipeline.service';
@@ -335,6 +339,82 @@ export class PersonalitiesService {
       totals,
       people,
       straddledToday,
+    );
+  }
+
+  /**
+   * The operator says this account is further along than the ladder thinks.
+   *
+   * Two real cases, and they are genuinely different, so the caller names which:
+   *
+   *   'seeding'      "I wiped this one myself." The three cleanup rungs are
+   *                  skipped and the account starts being handed people to add
+   *                  BY SEARCH. onboardedCount is untouched, because it is still
+   *                  a new account -- it just does not need wiping again.
+   *   'established'  "This one is already onboarded, just work Quick Add."
+   *
+   * MARKING IT ESTABLISHED ALSO FILLS IN onboardedCount, and that is not a
+   * convenience. `via` and the cap pair are both chosen from onboardedCount, not
+   * from phase -- so an account moved to `established` with a count of 0 would
+   * show "completed" on the page while the server went on seeding it by search
+   * under onboarding caps. Two ladders disagreeing is the bug this whole feature
+   * was built to end; setting the count is what keeps them saying one thing.
+   *
+   * FORWARDS ONLY, using the same rank the agent's reports use. An operator
+   * pressing this is skipping work, which is safe. Sending an account BACKWARDS
+   * would be asking a machine to delete the friends of an account that has been
+   * running for a fortnight, and there is no button for that on purpose.
+   */
+  async markOnboarded(
+    clientId: string,
+    accountId: string,
+    to: 'seeding' | 'established',
+  ) {
+    const account = await this.prisma.account.findFirst({
+      where: { id: accountId, personality: { clientId } },
+      select: {
+        id: true, label: true, enabled: true, phase: true, cleanedAt: true,
+        onboardedCount: true,
+        personalityId: true,
+        personality: { select: { client: { select: {
+          dailyCapPerAccount: true, onboardingDailyCap: true,
+          sessionCapPerAccount: true, onboardingSessionCap: true,
+        } } } },
+      },
+    });
+    if (!account) throw new NotFoundException('account not found');
+
+    let row = account;
+    if (phaseRank(to) > phaseRank(account.phase)) {
+      const updated = await this.prisma.account.update({
+        where: { id: accountId },
+        data: {
+          phase: to,
+          // Stamped for the same reason the agent's own report stamps it: the
+          // wipe is behind this account now, and a null here would go on saying
+          // it never finished. Kept if it is already set -- when the wipe
+          // happened is a fact, not something a later button rewrites.
+          cleanedAt: account.cleanedAt ?? new Date(),
+          ...(to === 'established'
+            ? { onboardedCount: Math.max(account.onboardedCount, ONBOARD_TARGET) }
+            : {}),
+        },
+        select: { id: true, label: true, enabled: true, phase: true,
+                  onboardedCount: true },
+      });
+      row = { ...account, ...updated };
+    }
+
+    const caps = account.personality.client;
+    return this.accountWithCounts(
+      row,
+      account.personalityId,
+      effectiveCaps(row.onboardedCount, {
+        dailyCap: caps.dailyCapPerAccount,
+        sessionCap: caps.sessionCapPerAccount,
+        onboardingDailyCap: caps.onboardingDailyCap,
+        onboardingSessionCap: caps.onboardingSessionCap,
+      }).dailyCap,
     );
   }
 
